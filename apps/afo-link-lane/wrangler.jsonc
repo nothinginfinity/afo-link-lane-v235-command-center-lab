@@ -7,13 +7,13 @@
     {
       "binding": "DB",
       "database_name": "afo-link-lane-v235-lab-db",
-      "database_id": "588171e3-a073-466d-9dd3-45a517d89546"
+      "database_id": "00b999a1-d637-45ee-9720-f90411cabb65"
     }
   ],
   "r2_buckets": [
     {
       "binding": "BUCKET",
-      "bucket_name": "afo-site-content"
+      "bucket_name": "afo-link-lane-v235-lab-content"
     }
   ]
 }
