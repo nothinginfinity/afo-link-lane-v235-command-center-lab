@@ -1,4 +1,4 @@
-const VERSION = "2.3.9-curated-feed-pack";
+const VERSION = "2.3.10-api-import-alias";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -1508,6 +1508,8 @@ export default {
     if(path==="/admin/add-feed"&&method==="POST") return apiAddFeed(env,request);
     if(path==="/admin/sync-feeds"&&(method==="GET"||method==="POST")) return apiSyncFeeds(env,request);
     if(path==="/admin/feed-sources"&&method==="GET") return apiFeedSources(env);
+    if(path==="/api/import-feeds"&&(method==="GET"||method==="POST")) return apiSyncFeeds(env,request);
+    if(path==="/api/feed-sources"&&method==="GET") return apiFeedSources(env);
     if(path.startsWith("/admin/link/")&&method==="DELETE") return deleteLink(env,decodeURIComponent(path.slice(12)));
     if(path==="/content/read"&&method==="GET") return apiReaderView(env,request);
     if(path==="/health") return j({ok:true,worker:WORKER_NAME,version:VERSION});
