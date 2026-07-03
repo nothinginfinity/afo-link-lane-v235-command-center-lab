@@ -1,4 +1,4 @@
-const VERSION = "2.3.0";
+const VERSION = "2.3.6-content-visor-mvp";
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
 const CORS = {"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET,POST,DELETE,OPTIONS","Access-Control-Allow-Headers":"Content-Type"};
@@ -135,6 +135,62 @@ async function storeOgImage(env,id,imageUrl){
 
 function domainOf(url){
   try{return new URL(url).hostname.replace(/^www\./,"");}catch{return "other";}
+}
+
+function extractLinkRel(html,rel){
+  const re=new RegExp("<link[^>]+rel=[\\\"'][^\\\"']*"+rel+"[^\\\"']*[\\\"'][^>]+href=[\\\"']([^\\\"']+)[\\\"']","i");
+  const rev=new RegExp("<link[^>]+href=[\\\"']([^\\\"']+)[\\\"'][^>]+rel=[\\\"'][^\\\"']*"+rel+"[^\\\"']*[\\\"']","i");
+  const m=html.match(re)||html.match(rev);
+  return m?decodeHtmlEntities(m[1]):null;
+}
+
+function readerParagraphsFromHtml(html){
+  const article=(html.match(/<article[\s\S]*?<\/article>/i)||[])[0];
+  const main=(html.match(/<main[\s\S]*?<\/main>/i)||[])[0];
+  const body=(html.match(/<body[\s\S]*?<\/body>/i)||[])[0];
+  let block=article||main||body||html;
+  block=block.replace(/<script[\s\S]*?<\/script>/gi," ")
+    .replace(/<style[\s\S]*?<\/style>/gi," ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi," ")
+    .replace(/<svg[\s\S]*?<\/svg>/gi," ")
+    .replace(/<nav[\s\S]*?<\/nav>/gi," ")
+    .replace(/<header[\s\S]*?<\/header>/gi," ")
+    .replace(/<footer[\s\S]*?<\/footer>/gi," ")
+    .replace(/<form[\s\S]*?<\/form>/gi," ")
+    .replace(/<!--([\s\S]*?)-->/g," ")
+    .replace(/<br\s*\/?>/gi,"\n")
+    .replace(/<\/(p|div|li|h1|h2|h3|h4|blockquote)>/gi,"\n")
+    .replace(/<[^>]+>/g," ");
+  const decoded=decodeHtmlEntities(block).replace(/\r/g,"\n").replace(/[ \t]+/g," ");
+  const parts=decoded.split(/\n+/).map(function(p){return p.trim();}).filter(function(p){return p.length>=60&&!/^cookies?\b/i.test(p)&&!/^(share|subscribe|advertisement)$/i.test(p);});
+  const seen=new Set(),out=[];
+  for(const p of parts){const key=p.slice(0,120);if(!seen.has(key)){seen.add(key);out.push(p.slice(0,1200));}if(out.length>=40)break;}
+  return out;
+}
+
+async function apiReaderView(request){
+  const reqUrl=new URL(request.url);
+  const raw=reqUrl.searchParams.get("url")||"";
+  let target;
+  try{target=new URL(raw);}catch{return j({ok:false,error:"Invalid URL",fallback:"Reader view unavailable"},400);}
+  if(target.protocol!=="http:"&&target.protocol!=="https:") return j({ok:false,error:"Unsupported URL",fallback:"Reader view unavailable"},400);
+  try{
+    const res=await fetch(target.toString(),{headers:{"User-Agent":"Mozilla/5.0 (compatible; AFOLinkLaneContentVisor/1.0)","Accept":"text/html,application/xhtml+xml"},redirect:"follow"});
+    const finalUrl=res.url||target.toString();
+    const contentType=res.headers.get("content-type")||"";
+    if(!res.ok) return j({ok:false,title:target.hostname,domain:domainOf(finalUrl),url:finalUrl,error:"HTTP "+res.status,fallback:"Reader view unavailable"},200);
+    if(!contentType.includes("html")&&!contentType.includes("text")) return j({ok:false,title:target.hostname,domain:domainOf(finalUrl),url:finalUrl,error:"Unsupported content type",fallback:"Reader view unavailable"},200);
+    const html=(await res.text()).slice(0,500000);
+    const canonical=resolveUrl(finalUrl,extractLinkRel(html,"canonical")||"")||finalUrl;
+    const title=extractMetaProperty(html,"og:title")||extractTitle(html)||target.hostname;
+    const description=extractMetaProperty(html,"og:description")||extractMetaName(html,"description")||"";
+    const imageRaw=extractMetaProperty(html,"og:image")||extractMetaProperty(html,"twitter:image")||"";
+    const image=imageRaw?resolveUrl(finalUrl,imageRaw):null;
+    const paragraphs=readerParagraphsFromHtml(html);
+    return j({ok:paragraphs.length>0,title,canonical,source_url:finalUrl,url:canonical,domain:domainOf(canonical||finalUrl),description,image,paragraphs,fallback:paragraphs.length?null:"Reader view unavailable"});
+  }catch(e){
+    return j({ok:false,title:target.hostname,domain:domainOf(target.toString()),url:target.toString(),error:e.message,fallback:"Reader view unavailable"},200);
+  }
 }
 
 // =================== YouTube channel RSS (channel groups) ===================
@@ -635,6 +691,14 @@ function buildGameScript(layout){
   L.push("  ov.style.display='flex';gameState='paused';");
   L.push("}");
   L.push("function closeLink(){document.getElementById('ov').style.display='none';gameState='flying';}");
+  L.push(String.raw`let contentVisor={open:false,previousGameState:null,node:null,kind:null};`);
+  L.push(String.raw`function cvEscape(s){return String(s||'').replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}`);
+  L.push(String.raw`function cvYoutubeId(p){if(p&&p.video_id)return p.video_id;try{const u=new URL((p&&p.url)||'');if(u.hostname==='youtu.be')return u.pathname.slice(1);if(u.hostname.endsWith('youtube.com')){if(u.pathname==='/watch')return u.searchParams.get('v');if(u.pathname.startsWith('/shorts/'))return u.pathname.split('/')[2];if(u.pathname.startsWith('/embed/'))return u.pathname.split('/')[2];}}catch(e){}return null;}`);
+  L.push(String.raw`function cvSetShell(p,kind){document.getElementById('cvTitle').textContent=(p&&p.title)||'Content Visor';document.getElementById('cvDomain').textContent=((p&&p.group_name)||((p&&p.domain)||''))+' · '+kind;const a=document.getElementById('cvOpenOriginal');a.href=(p&&p.url)||'#';}`);
+  L.push(String.raw`function renderYoutubeVisor(p,videoId){const src='https://www.youtube.com/embed/'+encodeURIComponent(videoId)+'?enablejsapi=1&autoplay=1';document.getElementById('cvBody').innerHTML='<div class="cvFrameWrap"><iframe id="cvYtPlayer" src="'+src+'" title="YouTube player" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe></div><div class="cvNote">YouTube embedded player engine · JS API hook ready for later play/pause/finish telemetry.</div>';}`);
+  L.push(String.raw`function renderArticleVisor(data,p){const ok=data&&data.ok&&Array.isArray(data.paragraphs)&&data.paragraphs.length;const image=data&&data.image?'<img class="cvHero" src="'+cvEscape(data.image)+'" alt="">':'';const desc=data&&data.description?'<p class="cvDesc">'+cvEscape(data.description)+'</p>':'';const paragraphs=ok?data.paragraphs.map(function(t){return '<p>'+cvEscape(t)+'</p>';}).join(''):'<div class="cvFallback"><h2>Reader view unavailable</h2><p>This source could not be converted into a clean in-app article view. Use Open Original to launch the source externally, or return to the 3D universe.</p></div>';document.getElementById('cvTitle').textContent=(data&&data.title)||(p&&p.title)||'Reader View';document.getElementById('cvDomain').textContent=((data&&data.domain)||(p&&p.domain)||'source')+' · Article Reader';document.getElementById('cvBody').innerHTML=image+desc+'<article class="cvArticle">'+paragraphs+'</article>';}`);
+  L.push(String.raw`async function openContentVisor(p){const visor=document.getElementById('contentVisor');if(!visor||!p)return;contentVisor.open=true;contentVisor.previousGameState=gameState;contentVisor.node=p;document.getElementById('focusBar').style.display='none';gameState='content_visor';visor.classList.add('open');visor.setAttribute('aria-hidden','false');const body=document.getElementById('cvBody');body.innerHTML='<div class="cvLoading">Loading in-app content engine...</div>';const yt=cvYoutubeId(p);if(yt){contentVisor.kind='youtube';cvSetShell(p,'YouTube Player');renderYoutubeVisor(p,yt);return;}contentVisor.kind='reader';cvSetShell(p,'Article Reader');try{const r=await fetch('/content/read?url='+encodeURIComponent(p.url));const data=await r.json();renderArticleVisor(data,p);}catch(e){renderArticleVisor({ok:false,title:p.title,domain:p.domain,description:p.description,paragraphs:[]},p);}}`);
+  L.push(String.raw`function closeContentVisor(){const visor=document.getElementById('contentVisor');if(!visor)return;const player=document.getElementById('cvYtPlayer');if(player)player.src='about:blank';visor.classList.remove('open');visor.setAttribute('aria-hidden','true');document.getElementById('cvBody').innerHTML='';const prior=contentVisor.previousGameState;contentVisor.open=false;contentVisor.previousGameState=null;contentVisor.node=null;contentVisor.kind=null;gameState=prior||((focus&&focus.phase==='focused')?'focused':'flying');if(gameState==='focused'&&focus&&focus.phase==='focused')document.getElementById('focusBar').style.display='flex';}`);
 
   L.push("let focus=null;");
   L.push("const FOCUS_CAM_DIST=110,FOCUS_GRID_DIST=64;");
@@ -710,7 +774,7 @@ function buildGameScript(layout){
   L.push("function showFocusBar(){");
   L.push("  const p=focus.mesh.userData;");
   L.push("  document.getElementById('fbTitle').textContent=p.title||p.url||'';");
-  L.push("  document.getElementById('fbVisit').onclick=function(){window.open(p.url,'_blank');};");
+  L.push("  document.getElementById('fbVisit').onclick=function(){openContentVisor(p);};");
   L.push("  document.getElementById('focusBar').style.display='flex';");
   L.push("}");
   L.push("function closeFocus(){");
@@ -897,7 +961,23 @@ function buildGameHTML(layout){
     "#ovDesc{color:#888;font-size:12px;text-align:center;max-width:90%;line-height:1.6;margin-bottom:8px;}",
     "#ovDomain{color:#00ff88;font-size:11px;margin-bottom:18px;}",
     "#ovVisit{padding:12px 32px;background:#00ff88;color:#000;border:none;font-family:monospace;font-size:15px;font-weight:bold;border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent;margin-bottom:10px;}",
-    "#ovClose{padding:10px 28px;background:transparent;color:#666;border:1px solid #333;font-family:monospace;font-size:13px;border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent;}",
+    "#ovClose{padding:10px 28px;background:transparent;color:#666;border:1px solid #333;font-family:monospace;font-size:13px;border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent;}",    "#contentVisor{position:fixed;inset:0;background:#05070d;color:#edf7ff;z-index:1600;display:flex;flex-direction:column;padding:calc(12px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom));transform:translateY(100%);opacity:0;pointer-events:none;transition:transform .28s ease,opacity .24s ease;}",
+    "#contentVisor.open{transform:translateY(0);opacity:1;pointer-events:auto;}",
+    "#cvTop{position:sticky;top:0;z-index:2;background:#05070d;border-bottom:1px solid rgba(0,255,136,.35);box-shadow:0 12px 28px rgba(0,255,136,.08);padding-bottom:10px;}",
+    "#cvReturn{width:100%;background:#00ff88;color:#00120a;border:0;border-radius:10px;font-family:monospace;font-weight:bold;font-size:15px;padding:13px 14px;margin-bottom:10px;cursor:pointer;}",
+    "#cvTitle{font-size:18px;line-height:1.25;font-weight:bold;color:#fff;max-height:3.8em;overflow:hidden;}",
+    "#cvDomain{font-size:11px;color:#00ff88;margin-top:5px;letter-spacing:.08em;text-transform:uppercase;}",
+    "#cvBody{width:100%;max-width:900px;margin:0 auto;flex:1;overflow:auto;-webkit-overflow-scrolling:touch;padding:16px 0 22px;}",
+    ".cvFrameWrap{width:100%;background:#000;border:1px solid rgba(0,255,136,.25);border-radius:14px;overflow:hidden;aspect-ratio:16/9;box-shadow:0 0 36px rgba(0,255,136,.12);}",
+    ".cvFrameWrap iframe{width:100%;height:100%;border:0;display:block;}",
+    ".cvHero{width:100%;max-height:38vh;object-fit:cover;border-radius:14px;margin-bottom:14px;border:1px solid rgba(255,255,255,.08);}",
+    ".cvDesc{color:#b7d0dc;font-size:15px;line-height:1.65;margin:0 0 16px;}",
+    ".cvArticle{background:#0b1018;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:18px;box-shadow:0 0 24px rgba(0,0,0,.3);}",
+    ".cvArticle p{font-family:ui-serif,Georgia,serif;font-size:17px;line-height:1.78;color:#e8eef6;margin:0 0 17px;}",
+    ".cvLoading,.cvFallback,.cvNote{background:#0b1018;border:1px solid rgba(0,255,136,.2);border-radius:14px;padding:18px;color:#a9c4cf;line-height:1.6;}",
+    "#cvActions{display:flex;gap:10px;width:100%;max-width:900px;margin:0 auto;padding-top:10px;border-top:1px solid rgba(255,255,255,.08);}",
+    "#cvOpenOriginal{flex:1;text-align:center;text-decoration:none;background:transparent;color:#00ff88;border:1px solid rgba(0,255,136,.45);border-radius:10px;font-family:monospace;font-weight:bold;padding:12px;}",
+    "#cvCloseBottom{flex:1;background:#111927;color:#cfe8f5;border:1px solid rgba(255,255,255,.12);border-radius:10px;font-family:monospace;font-weight:bold;padding:12px;}",
     "</style></head><body>",
     "<div id='loadScreen'><div id='loadLogo'>LINK LANE</div><div id='loadText'>Initializing flight systems</div><div id='loadBarTrack'><div id='loadBar'></div></div></div>",
     "<div id='toast'></div>",
@@ -944,7 +1024,15 @@ function buildGameHTML(layout){
     "  <button id='ovVisit'>Visit Site \u2192</button>",
     "  <button id='ovClose' onclick='closeLink()'>\u2190 back to space</button>",
     "</div>",
-    "<script src='https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js'></script>",
+    "<div id='contentVisor' aria-hidden='true'>",
+    "  <div id='cvTop'>",
+    "    <button id='cvReturn' onclick='closeContentVisor()'>\\u2190 Return to Universe</button>",
+    "    <div id='cvTitle'>Content Visor</div>",
+    "    <div id='cvDomain'>Reader Engine</div>",
+    "  </div>",
+    "  <main id='cvBody'></main>",
+    "  <div id='cvActions'><a id='cvOpenOriginal' href='#' target='_blank' rel='noopener'>Open Original \\u2197</a><button id='cvCloseBottom' onclick='closeContentVisor()'>Return</button></div>",
+    "</div>",    "<script src='https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js'></script>",
     "<script>",
     script,
     "</script>",
@@ -1108,6 +1196,7 @@ export default {
     if(path==="/admin/add-channel"&&method==="POST") return apiAddChannel(env,request);
     if(path==="/admin/add-feed"&&method==="POST") return apiAddFeed(env,request);
     if(path.startsWith("/admin/link/")&&method==="DELETE") return deleteLink(env,decodeURIComponent(path.slice(12)));
+    if(path==="/content/read"&&method==="GET") return apiReaderView(request);
     if(path==="/health") return j({ok:true,worker:WORKER_NAME,version:VERSION});
     if(path==="/admin/setup"&&method==="POST"){
       const results=[];
@@ -1115,7 +1204,7 @@ export default {
       return j({ok:true,results});
     }
     if(path==="/"||path===""){
-      const r=await env.DB.prepare("SELECT id,url,title,description,domain,og_image_key,group_name,is_short,published_at,added_at FROM links ORDER BY COALESCE(group_name,domain), added_at LIMIT 1500").all();
+      const r=await env.DB.prepare("SELECT id,url,title,description,domain,og_image_key,group_name,video_id,is_short,published_at,added_at FROM links ORDER BY COALESCE(group_name,domain), added_at LIMIT 1500").all();
       const layout=layoutLinks(r.results||[]);
       return new Response(buildGameHTML(layout),{headers:{"Content-Type":"text/html;charset=UTF-8"}});
     }
