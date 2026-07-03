@@ -1,4 +1,4 @@
-const VERSION = "2.3.7-feed-cron-universe";
+const VERSION = "2.3.8-feed-auto-sync-universe";
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
 const CORS = {"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET,POST,DELETE,OPTIONS","Access-Control-Allow-Headers":"Content-Type"};
@@ -465,6 +465,20 @@ async function apiFeedSources(env){
   await seedDefaultFeedSources(env);
   const r=await env.DB.prepare("SELECT id,feed_url,name,enabled,max_items,last_sync_at,last_status,last_error,last_added,last_skipped FROM feed_sources ORDER BY name").all();
   return j({ok:true,sources:r.results||[]});
+}
+
+async function maybeAutoSyncFeeds(env,ctx){
+  if(!ctx||typeof ctx.waitUntil!=="function") return;
+  ctx.waitUntil((async()=>{
+    try{
+      await ensureLabSchema(env);
+      await seedDefaultFeedSources(env);
+      const latest=await env.DB.prepare("SELECT finished_at FROM feed_sync_runs WHERE finished_at IS NOT NULL ORDER BY finished_at DESC LIMIT 1").first();
+      const lastMs=latest&&latest.finished_at?new Date(latest.finished_at+"Z").getTime():0;
+      if(lastMs&&Date.now()-lastMs<4*60*60*1000) return;
+      await syncConfiguredFeeds(env,{reason:"traffic-auto",sourceLimit:6,itemLimit:25});
+    }catch(e){}
+  })());
 }
 
 async function apiAddFeed(env,req){
@@ -1412,8 +1426,9 @@ export default {
   async scheduled(controller,env,ctx){
     ctx.waitUntil(syncConfiguredFeeds(env,{reason:"cron",sourceLimit:12,itemLimit:35,cron:controller.cron,scheduled_time:new Date(controller.scheduledTime).toISOString()}));
   },
-  async fetch(request,env){
+  async fetch(request,env,ctx){
     const url=new URL(request.url),path=url.pathname,method=request.method;
+    if(method==="GET"&&(path==="/"||path==="/admin")) maybeAutoSyncFeeds(env,ctx);
     if(method==="OPTIONS") return new Response(null,{status:204,headers:CORS});
     if(path.startsWith("/og-image/")) return apiOgImage(env,decodeURIComponent(path.slice(10)));
     if(path==="/admin"&&method==="GET"){
