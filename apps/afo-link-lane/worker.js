@@ -1,4 +1,4 @@
-const VERSION = "2.3.6-content-visor-mvp";
+const VERSION = "2.3.6-content-visor-reader-fallback";
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
 const CORS = {"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET,POST,DELETE,OPTIONS","Access-Control-Allow-Headers":"Content-Type"};
@@ -144,6 +144,42 @@ function extractLinkRel(html,rel){
   return m?decodeHtmlEntities(m[1]):null;
 }
 
+function readerCleanTextParts(text){
+  const decoded=decodeHtmlEntities(String(text||"")).replace(/\r/g,"\n").replace(/\u00a0/g," ").replace(/[ \t]+/g," ");
+  const parts=decoded.split(/\n+/).map(function(p){return p.trim();}).filter(function(p){
+    if(p.length<60) return false;
+    if(/^cookies?\b/i.test(p)) return false;
+    if(/^(share|subscribe|advertisement|sign up|log in|menu)$/i.test(p)) return false;
+    return true;
+  });
+  const seen=new Set(),out=[];
+  for(const p of parts){const key=p.toLowerCase().slice(0,120);if(!seen.has(key)){seen.add(key);out.push(p.slice(0,1200));}if(out.length>=50)break;}
+  return out;
+}
+
+function readerParagraphsFromStructuredData(html){
+  const out=[];
+  const scripts=html.match(/<script[^>]+type=[\"']application\/ld\+json[\"'][^>]*>[\s\S]*?<\/script>/gi)||[];
+  function walk(v){
+    if(!v) return;
+    if(Array.isArray(v)){v.forEach(walk);return;}
+    if(typeof v==='object'){
+      const type=String(v['@type']||'');
+      if(/Article|NewsArticle|BlogPosting|Report/i.test(type)){
+        if(v.articleBody) out.push(String(v.articleBody));
+        if(v.description) out.push(String(v.description));
+      }
+      Object.keys(v).forEach(function(k){if(k!=='articleBody'&&k!=='description')walk(v[k]);});
+    }
+  }
+  scripts.forEach(function(tag){
+    const raw=(tag.replace(/^<script[^>]*>/i,"").replace(/<\/script>$/i,"")||"").trim();
+    if(!raw) return;
+    try{walk(JSON.parse(decodeHtmlEntities(raw)));}catch(e){}
+  });
+  return readerCleanTextParts(out.join("\n\n"));
+}
+
 function readerParagraphsFromHtml(html){
   const article=(html.match(/<article[\s\S]*?<\/article>/i)||[])[0];
   const main=(html.match(/<main[\s\S]*?<\/main>/i)||[])[0];
@@ -162,10 +198,9 @@ function readerParagraphsFromHtml(html){
     .replace(/<\/(p|div|li|h1|h2|h3|h4|blockquote)>/gi,"\n")
     .replace(/<[^>]+>/g," ");
   const decoded=decodeHtmlEntities(block).replace(/\r/g,"\n").replace(/[ \t]+/g," ");
-  const parts=decoded.split(/\n+/).map(function(p){return p.trim();}).filter(function(p){return p.length>=60&&!/^cookies?\b/i.test(p)&&!/^(share|subscribe|advertisement)$/i.test(p);});
-  const seen=new Set(),out=[];
-  for(const p of parts){const key=p.slice(0,120);if(!seen.has(key)){seen.add(key);out.push(p.slice(0,1200));}if(out.length>=40)break;}
-  return out;
+  const out=readerCleanTextParts(decoded);
+  if(out.length) return out;
+  return readerParagraphsFromStructuredData(html);
 }
 
 async function apiReaderView(request){
@@ -186,8 +221,9 @@ async function apiReaderView(request){
     const description=extractMetaProperty(html,"og:description")||extractMetaName(html,"description")||"";
     const imageRaw=extractMetaProperty(html,"og:image")||extractMetaProperty(html,"twitter:image")||"";
     const image=imageRaw?resolveUrl(finalUrl,imageRaw):null;
-    const paragraphs=readerParagraphsFromHtml(html);
-    return j({ok:paragraphs.length>0,title,canonical,source_url:finalUrl,url:canonical,domain:domainOf(canonical||finalUrl),description,image,paragraphs,fallback:paragraphs.length?null:"Reader view unavailable"});
+    let paragraphs=readerParagraphsFromHtml(html);
+    if(!paragraphs.length&&description) paragraphs=readerCleanTextParts(description);
+    return j({ok:paragraphs.length>0,title,canonical,source_url:finalUrl,url:canonical,domain:domainOf(canonical||finalUrl),description,image,paragraphs,reader_source:paragraphs.length?"native":"none",fallback:paragraphs.length?null:"Reader view unavailable"});
   }catch(e){
     return j({ok:false,title:target.hostname,domain:domainOf(target.toString()),url:target.toString(),error:e.message,fallback:"Reader view unavailable"},200);
   }
@@ -696,7 +732,7 @@ function buildGameScript(layout){
   L.push(String.raw`function cvYoutubeId(p){if(p&&p.video_id)return p.video_id;try{const u=new URL((p&&p.url)||'');if(u.hostname==='youtu.be')return u.pathname.slice(1);if(u.hostname.endsWith('youtube.com')){if(u.pathname==='/watch')return u.searchParams.get('v');if(u.pathname.startsWith('/shorts/'))return u.pathname.split('/')[2];if(u.pathname.startsWith('/embed/'))return u.pathname.split('/')[2];}}catch(e){}return null;}`);
   L.push(String.raw`function cvSetShell(p,kind){document.getElementById('cvTitle').textContent=(p&&p.title)||'Content Visor';document.getElementById('cvDomain').textContent=((p&&p.group_name)||((p&&p.domain)||''))+' · '+kind;const a=document.getElementById('cvOpenOriginal');a.href=(p&&p.url)||'#';}`);
   L.push(String.raw`function renderYoutubeVisor(p,videoId){const src='https://www.youtube.com/embed/'+encodeURIComponent(videoId)+'?enablejsapi=1&autoplay=1';document.getElementById('cvBody').innerHTML='<div class="cvFrameWrap"><iframe id="cvYtPlayer" src="'+src+'" title="YouTube player" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe></div><div class="cvNote">YouTube embedded player engine · JS API hook ready for later play/pause/finish telemetry.</div>';}`);
-  L.push(String.raw`function renderArticleVisor(data,p){const ok=data&&data.ok&&Array.isArray(data.paragraphs)&&data.paragraphs.length;const image=data&&data.image?'<img class="cvHero" src="'+cvEscape(data.image)+'" alt="">':'';const desc=data&&data.description?'<p class="cvDesc">'+cvEscape(data.description)+'</p>':'';const paragraphs=ok?data.paragraphs.map(function(t){return '<p>'+cvEscape(t)+'</p>';}).join(''):'<div class="cvFallback"><h2>Reader view unavailable</h2><p>This source could not be converted into a clean in-app article view. Use Open Original to launch the source externally, or return to the 3D universe.</p></div>';document.getElementById('cvTitle').textContent=(data&&data.title)||(p&&p.title)||'Reader View';document.getElementById('cvDomain').textContent=((data&&data.domain)||(p&&p.domain)||'source')+' · Article Reader';document.getElementById('cvBody').innerHTML=image+desc+'<article class="cvArticle">'+paragraphs+'</article>';}`);
+  L.push(String.raw`function renderArticleVisor(data,p){const ok=data&&data.ok&&Array.isArray(data.paragraphs)&&data.paragraphs.length;const image=data&&data.image?'<img class="cvHero" src="'+cvEscape(data.image)+'" alt="">':'';const desc=(data&&data.description)||(p&&p.description)||'';const descHtml=desc?'<p class="cvDesc">'+cvEscape(desc)+'</p>':'';const source=data&&data.reader_source&&data.reader_source!=='none'?'<div class="cvNote">Reader engine: '+cvEscape(data.reader_source)+'</div>':'';const fallbackCard='<div class="cvFallback"><h2>Reader view needs the original</h2><p>This source blocked or hid clean article text from the in-app reader, but the Content Visor can still show the saved preview and keep you in the universe.</p>'+(desc?'<p>'+cvEscape(desc)+'</p>':'')+'<p>Use Open Original for the full source, or Return to Universe to keep flying.</p></div>';const paragraphs=ok?data.paragraphs.map(function(t){return '<p>'+cvEscape(t)+'</p>';}).join(''):fallbackCard;document.getElementById('cvTitle').textContent=(data&&data.title)||(p&&p.title)||'Reader View';document.getElementById('cvDomain').textContent=((data&&data.domain)||(p&&p.domain)||'source')+' · Article Reader';document.getElementById('cvBody').innerHTML=image+descHtml+source+'<article class="cvArticle">'+paragraphs+'</article>';}`);
   L.push(String.raw`async function openContentVisor(p){const visor=document.getElementById('contentVisor');if(!visor||!p)return;contentVisor.open=true;contentVisor.previousGameState=gameState;contentVisor.node=p;document.getElementById('focusBar').style.display='none';gameState='content_visor';visor.classList.add('open');visor.setAttribute('aria-hidden','false');const body=document.getElementById('cvBody');body.innerHTML='<div class="cvLoading">Loading in-app content engine...</div>';const yt=cvYoutubeId(p);if(yt){contentVisor.kind='youtube';cvSetShell(p,'YouTube Player');renderYoutubeVisor(p,yt);return;}contentVisor.kind='reader';cvSetShell(p,'Article Reader');try{const r=await fetch('/content/read?url='+encodeURIComponent(p.url));const data=await r.json();renderArticleVisor(data,p);}catch(e){renderArticleVisor({ok:false,title:p.title,domain:p.domain,description:p.description,paragraphs:[]},p);}}`);
   L.push(String.raw`function closeContentVisor(){const visor=document.getElementById('contentVisor');if(!visor)return;const player=document.getElementById('cvYtPlayer');if(player)player.src='about:blank';visor.classList.remove('open');visor.setAttribute('aria-hidden','true');document.getElementById('cvBody').innerHTML='';const prior=contentVisor.previousGameState;contentVisor.open=false;contentVisor.previousGameState=null;contentVisor.node=null;contentVisor.kind=null;gameState=prior||((focus&&focus.phase==='focused')?'focused':'flying');if(gameState==='focused'&&focus&&focus.phase==='focused')document.getElementById('focusBar').style.display='flex';}`);
 
