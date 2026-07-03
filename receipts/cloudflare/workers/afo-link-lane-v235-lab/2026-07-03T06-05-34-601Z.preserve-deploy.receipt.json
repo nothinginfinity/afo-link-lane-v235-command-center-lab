@@ -1,0 +1,44 @@
+{
+  "schema": "afo.preserve_deploy.receipt.v1",
+  "script_name": "afo-link-lane-v235-lab",
+  "created_at": "2026-07-03T06:05:34.765Z",
+  "ok": true,
+  "deployed": true,
+  "source_hash": "sha256:cdcdbf6c409c0fc8b16f20faf14c1adf8d59a87811af37cdc83a30ec17c25c79",
+  "previous_source_hash": "unavailable: Could not fetch live Worker source: HTTP 405: {\"success\":false,\"errors\":[{\"code\":10405,\"message\":\"Method not allowed for this authentication scheme\"}],\"messages",
+  "preserved_count": 4,
+  "updated_count": 0,
+  "total_bindings": 4,
+  "bindings": [
+    {
+      "name": "BUCKET",
+      "type": "r2_bucket",
+      "bucket_name": "afo-link-lane-v235-lab-content"
+    },
+    {
+      "name": "CF_ACCOUNT_ID",
+      "type": "secret_text",
+      "value_present": true,
+      "value_redacted": true
+    },
+    {
+      "name": "CF_BROWSER_RENDERING_API_TOKEN",
+      "type": "secret_text",
+      "value_present": true,
+      "value_redacted": true
+    },
+    {
+      "name": "DB",
+      "type": "d1",
+      "id": "00b999a1-d637-45ee-9720-f90411cabb65"
+    }
+  ],
+  "github": {
+    "owner": "nothinginfinity",
+    "repo": "afo-link-lane-v235-command-center-lab",
+    "branch": "main",
+    "path": "apps/afo-link-lane/worker.js",
+    "sha": "2cd83fe2cc8488dfb9bad25302ebf9221c230cad"
+  },
+  "deployed_at": "2026-07-03T06:05:34.601Z"
+}
