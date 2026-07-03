@@ -1,14 +1,33 @@
-const VERSION = "2.3.6-content-visor-browser-run-fallback";
+const VERSION = "2.3.7-feed-cron-universe";
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
 const CORS = {"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET,POST,DELETE,OPTIONS","Access-Control-Allow-Headers":"Content-Type"};
 
 const SCHEMA = [
   "CREATE TABLE IF NOT EXISTS links (id TEXT PRIMARY KEY, url TEXT NOT NULL, title TEXT, description TEXT, domain TEXT, og_image_key TEXT, group_name TEXT, video_id TEXT, is_short INTEGER DEFAULT 0, published_at TEXT, added_at TEXT DEFAULT (datetime('now')))",
-  "CREATE UNIQUE INDEX IF NOT EXISTS idx_links_url ON links(url)"
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_links_url ON links(url)",
+  "CREATE TABLE IF NOT EXISTS feed_sources (id TEXT PRIMARY KEY, feed_url TEXT NOT NULL UNIQUE, name TEXT, enabled INTEGER DEFAULT 1, max_items INTEGER DEFAULT 35, added_at TEXT DEFAULT (datetime('now')), last_sync_at TEXT, last_status TEXT, last_error TEXT, last_added INTEGER DEFAULT 0, last_skipped INTEGER DEFAULT 0)",
+  "CREATE INDEX IF NOT EXISTS idx_feed_sources_enabled ON feed_sources(enabled)",
+  "CREATE TABLE IF NOT EXISTS feed_sync_runs (id TEXT PRIMARY KEY, reason TEXT, started_at TEXT, finished_at TEXT, sources_checked INTEGER DEFAULT 0, items_found INTEGER DEFAULT 0, items_added INTEGER DEFAULT 0, items_skipped INTEGER DEFAULT 0, errors INTEGER DEFAULT 0)"
 ];
 
 const R_GALAXY = 1500;
+const MAX_UNIVERSE_NODES = 2500;
+
+const DEFAULT_FEED_SOURCES = [
+  {id:"feed-cloudflare-blog",feed_url:"https://blog.cloudflare.com/rss/",name:"Cloudflare Blog",max_items:35},
+  {id:"feed-mozilla-hacks",feed_url:"https://hacks.mozilla.org/feed/",name:"Mozilla Hacks",max_items:35},
+  {id:"feed-verge",feed_url:"https://www.theverge.com/rss/index.xml",name:"The Verge",max_items:35},
+  {id:"feed-wired",feed_url:"https://www.wired.com/feed/rss",name:"WIRED",max_items:35},
+  {id:"feed-techcrunch",feed_url:"https://techcrunch.com/feed/",name:"TechCrunch",max_items:35},
+  {id:"feed-ars-technica",feed_url:"https://arstechnica.com/feed/",name:"Ars Technica",max_items:35},
+  {id:"feed-github-blog",feed_url:"https://github.blog/feed/",name:"GitHub Blog",max_items:35},
+  {id:"feed-nasa-news",feed_url:"https://www.nasa.gov/news-release/feed/",name:"NASA News",max_items:35},
+  {id:"feed-openrss-cloudflare",feed_url:"https://openrss.org/blog.cloudflare.com/",name:"Open RSS: Cloudflare Blog",max_items:35},
+  {id:"feed-openrss-mozilla",feed_url:"https://openrss.org/hacks.mozilla.org/",name:"Open RSS: Mozilla Hacks",max_items:35},
+  {id:"feed-openrss-workers-sdk",feed_url:"https://openrss.org/github.com/cloudflare/workers-sdk/releases",name:"Open RSS: Cloudflare Workers SDK Releases",max_items:35},
+  {id:"feed-openrss-openai-cookbook",feed_url:"https://openrss.org/github.com/openai/openai-cookbook/releases",name:"Open RSS: OpenAI Cookbook Releases",max_items:35}
+];
 
 function j(v,s=200){return Response.json(v,{status:s,headers:CORS});}
 function uid(){return Math.random().toString(36).slice(2,9)+Date.now().toString(36);}
@@ -331,7 +350,125 @@ function parseGenericFeed(xml,limit){
   }
   return entries;
 }
+async function ensureLabSchema(env){
+  for(const sql of SCHEMA){await env.DB.prepare(sql).run();}
+}
+
+function hashString(s){
+  let h=0;
+  for(let i=0;i<String(s).length;i++) h=((h<<5)-h+String(s).charCodeAt(i))|0;
+  return h;
+}
+
+function normalizeFeedSource(source){
+  return {
+    id:String(source.id||uid()).slice(0,80),
+    feed_url:String(source.feed_url||source.url||"").trim(),
+    name:String(source.name||source.group_name||domainOf(source.feed_url||source.url||"")).trim(),
+    max_items:Math.max(1,Math.min(Number(source.max_items||35),50))
+  };
+}
+
+async function seedDefaultFeedSources(env){
+  let inserted=0;
+  for(const raw of DEFAULT_FEED_SOURCES){
+    const s=normalizeFeedSource(raw);
+    if(!s.feed_url) continue;
+    const res=await env.DB.prepare("INSERT OR IGNORE INTO feed_sources (id,feed_url,name,max_items,enabled) VALUES (?,?,?,?,1)")
+      .bind(s.id,s.feed_url,s.name,s.max_items).run();
+    if(res.meta&&res.meta.changes) inserted+=res.meta.changes;
+  }
+  return inserted;
+}
+
+async function registerFeedSource(env,feedUrl,name,maxItems){
+  const s=normalizeFeedSource({feed_url:feedUrl,name:name,max_items:maxItems});
+  if(!s.feed_url) return null;
+  const id="feed-"+domainOf(s.feed_url).replace(/[^a-z0-9]+/gi,"-").toLowerCase()+"-"+Math.abs(hashString(s.feed_url));
+  await env.DB.prepare("INSERT OR IGNORE INTO feed_sources (id,feed_url,name,max_items,enabled) VALUES (?,?,?,?,1)")
+    .bind(id,s.feed_url,s.name,s.max_items).run();
+  return id;
+}
+
+async function fetchFeedXml(feedUrl){
+  const res=await fetch(feedUrl,{headers:{"User-Agent":"AFOLinkLaneFeedCron/1.0 (+https://afo-link-lane-v235-lab.jaredtechfit.workers.dev/)","Accept":"application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.1"},redirect:"follow"});
+  if(!res.ok) throw new Error("Feed fetch failed: HTTP "+res.status);
+  return await res.text();
+}
+
+async function insertFeedItem(env,it,source){
+  const url=it.link;
+  if(!url) return {added:0,skipped:1};
+  const existing=await env.DB.prepare("SELECT id FROM links WHERE url=?").bind(url).first();
+  if(existing) return {added:0,skipped:1};
+  const id=uid();
+  let ogImageKey=null;
+  if(it.image) ogImageKey=await storeOgImage(env,id,it.image);
+  let publishedAt=null;
+  if(it.published){const d=new Date(it.published);if(!isNaN(d.getTime())) publishedAt=d.toISOString().slice(0,10);}
+  await env.DB.prepare("INSERT OR IGNORE INTO links (id,url,title,description,domain,og_image_key,group_name,published_at) VALUES (?,?,?,?,?,?,?,?)")
+    .bind(id,url,it.title||url,it.description||"",domainOf(url),ogImageKey,source.name||domainOf(url),publishedAt).run();
+  return {added:1,skipped:0};
+}
+
+async function syncOneFeedSource(env,source,opts){
+  const max=Math.max(1,Math.min(Number(opts.itemLimit||source.max_items||35),50));
+  let added=0,skipped=0,found=0,error=null;
+  try{
+    const xml=await fetchFeedXml(source.feed_url);
+    const items=parseGenericFeed(xml,max);
+    found=items.length;
+    for(const it of items){const r=await insertFeedItem(env,it,source);added+=r.added;skipped+=r.skipped;}
+    await env.DB.prepare("UPDATE feed_sources SET last_sync_at=datetime('now'), last_status='ok', last_error=NULL, last_added=?, last_skipped=? WHERE id=?")
+      .bind(added,skipped,source.id).run();
+  }catch(e){
+    error=e.message||String(e);
+    await env.DB.prepare("UPDATE feed_sources SET last_sync_at=datetime('now'), last_status='error', last_error=? WHERE id=?")
+      .bind(error,source.id).run();
+  }
+  return {id:source.id,name:source.name,feed_url:source.feed_url,found,added,skipped,error};
+}
+
+async function syncConfiguredFeeds(env,opts={}){
+  await ensureLabSchema(env);
+  const seeded=await seedDefaultFeedSources(env);
+  const reason=String(opts.reason||"manual");
+  const runId=uid();
+  const sourceLimit=Math.max(1,Math.min(Number(opts.sourceLimit||opts.source_limit||12),40));
+  const itemLimit=Math.max(1,Math.min(Number(opts.itemLimit||opts.item_limit||35),50));
+  await env.DB.prepare("INSERT INTO feed_sync_runs (id,reason,started_at) VALUES (?,?,datetime('now'))").bind(runId,reason).run();
+  const rows=(await env.DB.prepare("SELECT id,feed_url,name,max_items FROM feed_sources WHERE enabled=1 ORDER BY COALESCE(last_sync_at,'1970-01-01'), added_at LIMIT ?").bind(sourceLimit).all()).results||[];
+  const sources=rows.map(normalizeFeedSource);
+  let itemsFound=0,itemsAdded=0,itemsSkipped=0,errors=0;
+  const results=[];
+  for(const source of sources){
+    const r=await syncOneFeedSource(env,source,{itemLimit});
+    results.push(r);
+    itemsFound+=r.found||0;itemsAdded+=r.added||0;itemsSkipped+=r.skipped||0;if(r.error)errors++;
+  }
+  await env.DB.prepare("UPDATE feed_sync_runs SET finished_at=datetime('now'), sources_checked=?, items_found=?, items_added=?, items_skipped=?, errors=? WHERE id=?")
+    .bind(sources.length,itemsFound,itemsAdded,itemsSkipped,errors,runId).run();
+  const countRow=await env.DB.prepare("SELECT COUNT(*) AS count FROM links").first();
+  return {ok:true,version:VERSION,run_id:runId,reason,seeded_sources:seeded,sources_checked:sources.length,items_found:itemsFound,items_added:itemsAdded,items_skipped:itemsSkipped,errors,total_nodes:countRow?countRow.count:null,results};
+}
+
+async function apiSyncFeeds(env,request){
+  const url=new URL(request.url);
+  const body=request.method==="POST"?await request.json().catch(()=>({})):{};
+  const sourceLimit=body.source_limit||url.searchParams.get("source_limit")||12;
+  const itemLimit=body.item_limit||url.searchParams.get("item_limit")||35;
+  return j(await syncConfiguredFeeds(env,{reason:"manual",sourceLimit,itemLimit}));
+}
+
+async function apiFeedSources(env){
+  await ensureLabSchema(env);
+  await seedDefaultFeedSources(env);
+  const r=await env.DB.prepare("SELECT id,feed_url,name,enabled,max_items,last_sync_at,last_status,last_error,last_added,last_skipped FROM feed_sources ORDER BY name").all();
+  return j({ok:true,sources:r.results||[]});
+}
+
 async function apiAddFeed(env,req){
+  await ensureLabSchema(env);
   const body=await req.json().catch(()=>({}));
   const feedUrl=body.feed_url;
   const max=Math.max(1,Math.min(Number(body.max||15),30));
@@ -361,6 +498,7 @@ async function apiAddFeed(env,req){
       .bind(id,url,it.title||url,it.description||"",domainOf(url),ogImageKey,groupName,publishedAt).run();
     added++;
   }
+  await registerFeedSource(env,feedUrl,groupName,max);
   return j({ok:true,feed:groupName,added,skipped,found:items.length});
 }
 
@@ -1132,7 +1270,10 @@ function buildAdminHTML(links){
     "</head><body>",
     "<h1>\uD83D\uDD17 Link Lane</h1>",
     "<a href='/'>\u2190 back to game</a>",
-    "<h2>Add an RSS/Article Feed Group</h2>",
+    "<h2>Auto Feed Sync</h2>",
+    "<p class='note'>Cron keeps registered RSS/Open RSS sources fresh. Run a manual sync now to add nodes immediately instead of waiting for the next scheduled update.</p>",
+    "<div id='syncMsg'></div>",
+    "<button class='go' onclick='syncFeeds()'>Sync Registered Feeds ⚡</button>",    "<h2>Add an RSS/Article Feed Group</h2>",
     "<p class='note'>Any site with an RSS or Atom feed works - news, blogs, podcasts, tech/science publications. Paste the feed URL directly (not the site's homepage).</p>",
     "<div id='fdMsg'></div>",
     "<input id='fdInput' placeholder='https://example.com/feed/' style='width:100%;background:#000;color:#ccc;border:1px solid #1a1a2a;border-radius:4px;padding:10px;font-family:monospace;font-size:14px;margin-bottom:8px;'>",
@@ -1163,7 +1304,17 @@ function buildAdminHTML(links){
     "function msg(t,ok){const d=document.getElementById('msg');d.textContent=t;d.className=ok?'ok':'er';d.style.display='block';setTimeout(function(){d.style.display='none';},6000);}",
     "function chMsg(t,ok){const d=document.getElementById('chMsg');d.textContent=t;d.className=ok?'ok':'er';d.style.display='block';}",
     "function fdMsg(t,ok){const d=document.getElementById('fdMsg');d.textContent=t;d.className=ok?'ok':'er';d.style.display='block';}",
-    "async function addFeed(){",
+    "function syncMsg(t,ok){const d=document.getElementById('syncMsg');d.textContent=t;d.className=ok?'ok':'er';d.style.display='block';}",
+    "async function syncFeeds(){",
+    "  const btn=document.querySelector('button[onclick=\\\"syncFeeds()\\\"]');btn.disabled=true;btn.textContent='Syncing feeds...';",
+    "  try{",
+    "    const r=await fetch('/admin/sync-feeds?source_limit=12&item_limit=35');",
+    "    const d=await r.json();",
+    "    if(d.ok) syncMsg('Synced '+d.sources_checked+' source(s): '+d.items_added+' added, '+d.items_skipped+' skipped. Total nodes: '+d.total_nodes+'. Refresh game to fly them.',true);",
+    "    else syncMsg(d.error||'Feed sync failed',false);",
+    "  }catch(e){syncMsg('Request failed: '+e.message,false);}",
+    "  btn.disabled=false;btn.textContent='Sync Registered Feeds ⚡';",
+    "}",    "async function addFeed(){",
     "  const feedUrl=document.getElementById('fdInput').value.trim();",
     "  const name=document.getElementById('fdName').value.trim();",
     "  const max=document.getElementById('fdMax').value||15;",
@@ -1258,17 +1409,22 @@ async function deleteLink(env,id){
 // =================== ROUTER ===================
 
 export default {
+  async scheduled(controller,env,ctx){
+    ctx.waitUntil(syncConfiguredFeeds(env,{reason:"cron",sourceLimit:12,itemLimit:35,cron:controller.cron,scheduled_time:new Date(controller.scheduledTime).toISOString()}));
+  },
   async fetch(request,env){
     const url=new URL(request.url),path=url.pathname,method=request.method;
     if(method==="OPTIONS") return new Response(null,{status:204,headers:CORS});
     if(path.startsWith("/og-image/")) return apiOgImage(env,decodeURIComponent(path.slice(10)));
     if(path==="/admin"&&method==="GET"){
-      const r=await env.DB.prepare("SELECT id,url,title,domain,og_image_key,group_name,is_short FROM links ORDER BY added_at DESC LIMIT 1500").all();
+      const r=await env.DB.prepare("SELECT id,url,title,domain,og_image_key,group_name,is_short FROM links ORDER BY added_at DESC LIMIT "+MAX_UNIVERSE_NODES).all();
       return new Response(buildAdminHTML(r.results||[]),{headers:{"Content-Type":"text/html;charset=UTF-8"}});
     }
     if(path==="/admin/add"&&method==="POST") return apiAddLink(env,request);
     if(path==="/admin/add-channel"&&method==="POST") return apiAddChannel(env,request);
     if(path==="/admin/add-feed"&&method==="POST") return apiAddFeed(env,request);
+    if(path==="/admin/sync-feeds"&&(method==="GET"||method==="POST")) return apiSyncFeeds(env,request);
+    if(path==="/admin/feed-sources"&&method==="GET") return apiFeedSources(env);
     if(path.startsWith("/admin/link/")&&method==="DELETE") return deleteLink(env,decodeURIComponent(path.slice(12)));
     if(path==="/content/read"&&method==="GET") return apiReaderView(env,request);
     if(path==="/health") return j({ok:true,worker:WORKER_NAME,version:VERSION});
@@ -1278,7 +1434,7 @@ export default {
       return j({ok:true,results});
     }
     if(path==="/"||path===""){
-      const r=await env.DB.prepare("SELECT id,url,title,description,domain,og_image_key,group_name,video_id,is_short,published_at,added_at FROM links ORDER BY COALESCE(group_name,domain), added_at LIMIT 1500").all();
+      const r=await env.DB.prepare("SELECT id,url,title,description,domain,og_image_key,group_name,video_id,is_short,published_at,added_at FROM links ORDER BY COALESCE(group_name,domain), added_at LIMIT "+MAX_UNIVERSE_NODES).all();
       const layout=layoutLinks(r.results||[]);
       return new Response(buildGameHTML(layout),{headers:{"Content-Type":"text/html;charset=UTF-8"}});
     }
