@@ -1,4 +1,4 @@
-const VERSION = "2.3.6-content-visor-reader-fallback";
+const VERSION = "2.3.6-content-visor-browser-run-fallback";
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
 const CORS = {"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET,POST,DELETE,OPTIONS","Access-Control-Allow-Headers":"Content-Type"};
@@ -180,6 +180,34 @@ function readerParagraphsFromStructuredData(html){
   return readerCleanTextParts(out.join("\n\n"));
 }
 
+function readerParagraphsFromMarkdown(md){
+  const clean=String(md||"")
+    .replace(/^Title:.*$/gmi,"")
+    .replace(/^URL Source:.*$/gmi,"")
+    .replace(/^Markdown Content:.*$/gmi,"")
+    .replace(/^#{1,6}\s*/gm,"")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g,"")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g,"$1")
+    .replace(/```[\s\S]*?```/g," ");
+  return readerCleanTextParts(clean);
+}
+
+async function browserRunMarkdownFallback(env,targetUrl){
+  const token=env.CF_BROWSER_RENDERING_API_TOKEN||env.CLOUDFLARE_BROWSER_RENDERING_API_TOKEN||env.BROWSER_RUN_API_TOKEN||"";
+  const accountId=env.CF_ACCOUNT_ID||env.CLOUDFLARE_ACCOUNT_ID||"";
+  if(!token||!accountId) return null;
+  try{
+    const endpoint="https://api.cloudflare.com/client/v4/accounts/"+encodeURIComponent(accountId)+"/browser-rendering/markdown";
+    const res=await fetch(endpoint,{method:"POST",headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json"},body:JSON.stringify({url:targetUrl,userAgent:"Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",gotoOptions:{waitUntil:"networkidle2",timeout:45000}})});
+    if(!res.ok) return {ok:false,error:"Browser Run HTTP "+res.status};
+    const data=await res.json().catch(()=>null);
+    const markdown=data&&typeof data.result==="string"?data.result:"";
+    const paragraphs=readerParagraphsFromMarkdown(markdown);
+    if(paragraphs.length) return {ok:true,paragraphs:paragraphs,reader_source:"browser-run-markdown"};
+    return {ok:false,error:"Browser Run returned no readable markdown"};
+  }catch(e){return {ok:false,error:e.message};}
+}
+
 function readerParagraphsFromHtml(html){
   const article=(html.match(/<article[\s\S]*?<\/article>/i)||[])[0];
   const main=(html.match(/<main[\s\S]*?<\/main>/i)||[])[0];
@@ -203,30 +231,40 @@ function readerParagraphsFromHtml(html){
   return readerParagraphsFromStructuredData(html);
 }
 
-async function apiReaderView(request){
+async function apiReaderView(env,request){
   const reqUrl=new URL(request.url);
   const raw=reqUrl.searchParams.get("url")||"";
   let target;
   try{target=new URL(raw);}catch{return j({ok:false,error:"Invalid URL",fallback:"Reader view unavailable"},400);}
   if(target.protocol!=="http:"&&target.protocol!=="https:") return j({ok:false,error:"Unsupported URL",fallback:"Reader view unavailable"},400);
+  let base={title:target.hostname,domain:domainOf(target.toString()),url:target.toString(),canonical:target.toString(),source_url:target.toString(),description:"",image:null,error:null};
   try{
     const res=await fetch(target.toString(),{headers:{"User-Agent":"Mozilla/5.0 (compatible; AFOLinkLaneContentVisor/1.0)","Accept":"text/html,application/xhtml+xml"},redirect:"follow"});
     const finalUrl=res.url||target.toString();
     const contentType=res.headers.get("content-type")||"";
-    if(!res.ok) return j({ok:false,title:target.hostname,domain:domainOf(finalUrl),url:finalUrl,error:"HTTP "+res.status,fallback:"Reader view unavailable"},200);
-    if(!contentType.includes("html")&&!contentType.includes("text")) return j({ok:false,title:target.hostname,domain:domainOf(finalUrl),url:finalUrl,error:"Unsupported content type",fallback:"Reader view unavailable"},200);
-    const html=(await res.text()).slice(0,500000);
-    const canonical=resolveUrl(finalUrl,extractLinkRel(html,"canonical")||"")||finalUrl;
-    const title=extractMetaProperty(html,"og:title")||extractTitle(html)||target.hostname;
-    const description=extractMetaProperty(html,"og:description")||extractMetaName(html,"description")||"";
-    const imageRaw=extractMetaProperty(html,"og:image")||extractMetaProperty(html,"twitter:image")||"";
-    const image=imageRaw?resolveUrl(finalUrl,imageRaw):null;
-    let paragraphs=readerParagraphsFromHtml(html);
-    if(!paragraphs.length&&description) paragraphs=readerCleanTextParts(description);
-    return j({ok:paragraphs.length>0,title,canonical,source_url:finalUrl,url:canonical,domain:domainOf(canonical||finalUrl),description,image,paragraphs,reader_source:paragraphs.length?"native":"none",fallback:paragraphs.length?null:"Reader view unavailable"});
-  }catch(e){
-    return j({ok:false,title:target.hostname,domain:domainOf(target.toString()),url:target.toString(),error:e.message,fallback:"Reader view unavailable"},200);
+    base.source_url=finalUrl;base.url=finalUrl;base.canonical=finalUrl;base.domain=domainOf(finalUrl);
+    if(res.ok&&(contentType.includes("html")||contentType.includes("text"))){
+      const html=(await res.text()).slice(0,500000);
+      const canonical=resolveUrl(finalUrl,extractLinkRel(html,"canonical")||"")||finalUrl;
+      const title=extractMetaProperty(html,"og:title")||extractTitle(html)||target.hostname;
+      const description=extractMetaProperty(html,"og:description")||extractMetaName(html,"description")||"";
+      const imageRaw=extractMetaProperty(html,"og:image")||extractMetaProperty(html,"twitter:image")||"";
+      const image=imageRaw?resolveUrl(finalUrl,imageRaw):null;
+      let paragraphs=readerParagraphsFromHtml(html);
+      if(!paragraphs.length&&description) paragraphs=readerCleanTextParts(description);
+      base={title,canonical,source_url:finalUrl,url:canonical,domain:domainOf(canonical||finalUrl),description,image,error:null};
+      if(paragraphs.length) return j(Object.assign({},base,{ok:true,paragraphs,reader_source:"native",fallback:null}));
+      base.error="native reader returned no paragraphs";
+    }else{
+      base.error=!res.ok?"HTTP "+res.status:"Unsupported content type";
+    }
+  }catch(e){base.error=e.message;}
+  const browserRun=await browserRunMarkdownFallback(env,target.toString());
+  if(browserRun&&browserRun.ok){
+    return j(Object.assign({},base,{ok:true,paragraphs:browserRun.paragraphs,reader_source:browserRun.reader_source,fallback:null}),200);
   }
+  if(browserRun&&browserRun.error) base.error=(base.error?base.error+"; ":"")+browserRun.error;
+  return j(Object.assign({},base,{ok:false,paragraphs:[],reader_source:browserRun?"browser-run-markdown-failed":"none",fallback:"Reader view unavailable"}),200);
 }
 
 // =================== YouTube channel RSS (channel groups) ===================
@@ -1232,7 +1270,7 @@ export default {
     if(path==="/admin/add-channel"&&method==="POST") return apiAddChannel(env,request);
     if(path==="/admin/add-feed"&&method==="POST") return apiAddFeed(env,request);
     if(path.startsWith("/admin/link/")&&method==="DELETE") return deleteLink(env,decodeURIComponent(path.slice(12)));
-    if(path==="/content/read"&&method==="GET") return apiReaderView(request);
+    if(path==="/content/read"&&method==="GET") return apiReaderView(env,request);
     if(path==="/health") return j({ok:true,worker:WORKER_NAME,version:VERSION});
     if(path==="/admin/setup"&&method==="POST"){
       const results=[];
