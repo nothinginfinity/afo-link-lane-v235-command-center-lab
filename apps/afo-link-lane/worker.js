@@ -1,4 +1,4 @@
-const VERSION = "2.3.16-search-sequence-polish";
+const VERSION = "";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -662,7 +662,8 @@ function buildGameScript(layout){
   L.push(String.raw`const navState={speed:3,yaw:0,orbit:0,panX:0,panY:0,held:{},braking:false};
 const NAV_LIMITS={minSpeed:-6,maxSpeed:14,speedStep:1,holdSpeedStep:0.14,yawStep:0.1,orbitStep:0.12,panStep:22,holdYawStep:0.022,holdOrbitStep:0.026,holdPanStep:4.2};`);
   L.push(String.raw`const searchState={open:false,query:'',matches:[],matchSet:new Set(),activeIndex:-1,cameraFlight:null};
-const _searchPos=new THREE.Vector3(),_searchScale=new THREE.Vector3(1,1,1),_searchQuat=new THREE.Quaternion(),_searchM4=new THREE.Matrix4(),_searchTmp=new THREE.Vector3();`);
+const _searchPos=new THREE.Vector3(),_searchScale=new THREE.Vector3(1,1,1),_searchQuat=new THREE.Quaternion(),_searchM4=new THREE.Matrix4(),_searchTmp=new THREE.Vector3();
+const _radarWorld=new THREE.Vector3(),_radarRight=new THREE.Vector3(),_radarUp=new THREE.Vector3(),_radarFwd=new THREE.Vector3();`);
   L.push("let yaw=0,pitch=0,yawVel=0,pitchVel=0;");
   L.push("const PITCH_LIMIT=1.3;");
   L.push(String.raw`const RENDER_BUDGET=(function(){
@@ -1045,6 +1046,43 @@ function nodePosition(p,out){
   if(p&&p.mesh){out.copy(p.mesh.position);return out;}
   out.set((p&&p.x)||0,(p&&p.y)||0,(p&&p.z)||0);return out;
 }
+function waypointLabel(p){return String((p&&p.title)||(p&&p.domain)||'result').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c];});}
+function selectWaypointResult(matchPos){selectSearchResult(matchPos,true);}
+function updateSearchRadar(){
+  const layer=document.getElementById('waypointLayer'),ring=document.getElementById('radarRing');
+  if(!layer)return;
+  const enabled=gameState==='flying'&&Boolean(searchState.query)&&searchState.matches.length>0;
+  if(ring)ring.style.display=enabled?'block':'none';
+  if(!enabled){if(layer.innerHTML)layer.innerHTML='';return;}
+  const width=layer.clientWidth||layer.offsetWidth||480,height=layer.clientHeight||layer.offsetHeight||320;
+  const cx=width/2,cy=height/2,edge=Math.max(40,Math.min(cx,cy)-24);
+  camera.updateMatrixWorld();
+  _radarRight.set(1,0,0).applyQuaternion(camera.quaternion);
+  _radarUp.set(0,1,0).applyQuaternion(camera.quaternion);
+  _radarFwd.set(0,0,-1).applyQuaternion(camera.quaternion);
+  const candidates=[],scan=Math.min(searchState.matches.length,32);
+  for(let m=0;m<scan;m++){
+    const idx=searchState.matches[m],p=nodeData[idx];if(!p)continue;
+    const world=nodePosition(p,_radarWorld);
+    const tx=world.x-camera.position.x,ty=world.y-camera.position.y,tz=world.z-camera.position.z;
+    let sx=tx*_radarRight.x+ty*_radarRight.y+tz*_radarRight.z;
+    let sy=tx*_radarUp.x+ty*_radarUp.y+tz*_radarUp.z;
+    const sz=tx*_radarFwd.x+ty*_radarFwd.y+tz*_radarFwd.z;
+    const ndc=world.clone().project(camera);
+    const off=sz<=0||ndc.z<0||ndc.z>1||Math.abs(ndc.x)>0.86||Math.abs(ndc.y)>0.86;
+    if(!off)continue;
+    if(sz<=0){sx=-sx;sy=-sy;}
+    if(Math.abs(sx)+Math.abs(sy)<0.001){sx=(m%2?-1:1);sy=-1;}
+    const screenAng=Math.atan2(-sy,sx);
+    const x=cx+Math.cos(screenAng)*edge,y=cy+Math.sin(screenAng)*edge;
+    const dist=Math.sqrt(tx*tx+ty*ty+tz*tz);
+    candidates.push({matchPos:m,x:x,y:y,ang:screenAng,dist:dist,active:m===searchState.activeIndex,label:waypointLabel(p)});
+  }
+  const chosen=candidates.sort(function(a,b){if(a.active!==b.active)return a.active?-1:1;return a.dist-b.dist;}).slice(0,5);
+  layer.innerHTML=chosen.map(function(w,i){
+    return '<button type="button" class="searchWaypoint'+(w.active?' active':'')+'" style="left:'+w.x.toFixed(1)+'px;top:'+w.y.toFixed(1)+'px;--ang:'+w.ang.toFixed(4)+'rad" onclick="selectWaypointResult('+w.matchPos+')" aria-label="Fly to search result: '+w.label+'" title="'+w.label+'"><span>➤</span><b>'+(i+1)+'</b></button>';
+  }).join('');
+}
 function searchScaleFor(idx,pulse){
   if(!searchState.query)return 1;
   if(!searchState.matchSet.has(idx))return 0.32;
@@ -1073,6 +1111,7 @@ function updateSearchUI(){
   if(deck)deck.classList.toggle('open',searchState.open||Boolean(searchState.query));
   if(input&&document.activeElement!==input)input.value=searchState.query;
   if(selected)selected.textContent='';
+  if(typeof updateSearchRadar==='function')updateSearchRadar();
   if(!count)return;
   if(!searchState.query){count.textContent='Searchlight ready';return;}
   if(!searchState.matches.length){count.textContent='0 results';return;}
@@ -1350,7 +1389,8 @@ function bindFlightHud(){
 }`);
 
   L.push("function updateHUD(){");
-  L.push("  const hint=document.getElementById('targetHint'),cross=document.getElementById('crosshair');");
+  L.push("  const hint=document.getElementById('targetHint'),cross=document.getElementById('crosshair');
+  if(typeof updateSearchRadar==='function')updateSearchRadar();");
   L.push("  if(targeted){cross.classList.add('locked');hint.style.display='block';hint.textContent='TAP TO VIEW \u2014 '+(targeted.userData.title||targeted.userData.url||'link');}");
   L.push("  else{cross.classList.remove('locked');hint.style.display='none';}");
   L.push("  const sl=document.getElementById('speedLabel');");
@@ -1443,6 +1483,15 @@ function buildGameHTML(layout){
     "#crosshair{position:absolute;top:50%;left:50%;width:26px;height:26px;margin:-13px 0 0 -13px;border:2px solid rgba(255,255,255,0.4);border-radius:50%;transition:border-color 0.15s,transform 0.15s;}",
     "#crosshair.locked{border-color:#00ff88;transform:scale(1.3);box-shadow:0 0 14px rgba(0,255,136,0.6);}",
     "#targetHint{display:none;position:absolute;top:54%;left:50%;transform:translateX(-50%);color:#00ff88;font-size:12px;background:rgba(0,0,0,0.6);padding:4px 10px;border-radius:4px;white-space:nowrap;}",
+    "#radarRing{display:none;position:absolute;top:50%;left:50%;width:112px;height:112px;margin:-56px 0 0 -56px;border:1px solid rgba(0,255,136,.34);border-radius:50%;box-shadow:0 0 24px rgba(0,255,136,.14),inset 0 0 18px rgba(0,255,136,.08);z-index:12;}",
+    "#radarRing:before,#radarRing:after{content:'';position:absolute;background:rgba(0,255,136,.22);}",
+    "#radarRing:before{left:50%;top:8px;bottom:8px;width:1px;}",
+    "#radarRing:after{left:8px;right:8px;top:50%;height:1px;}",
+    "#waypointLayer{position:absolute;inset:0;pointer-events:none;z-index:28;}",
+    ".searchWaypoint{position:absolute;width:34px;height:34px;border-radius:50%;border:1px solid rgba(0,255,136,.62);background:rgba(0,18,14,.78);color:#bfffe3;box-shadow:0 0 14px rgba(0,255,136,.24);transform:translate(-50%,-50%) rotate(var(--ang));pointer-events:auto;touch-action:manipulation;font-family:monospace;font-size:13px;font-weight:bold;display:flex;align-items:center;justify-content:center;gap:1px;-webkit-tap-highlight-color:transparent;}",
+    ".searchWaypoint span{font-size:15px;line-height:1;}",
+    ".searchWaypoint b{font-size:9px;color:#00ff88;}",
+    ".searchWaypoint.active{background:rgba(0,255,136,.28);color:#fff;border-color:#fff;box-shadow:0 0 18px rgba(0,255,136,.5);}",
     "#compass{position:absolute;top:50%;left:50%;width:0;height:0;display:none;}",
     "#compass:before{content:'\u25B2';position:absolute;left:-150px;top:-10px;color:#ffdd00;font-size:14px;}",
     "#compassLabel{position:absolute;top:8px;left:50%;transform:translateX(-50%);color:#ffdd00;font-size:11px;background:rgba(0,0,0,0.55);padding:2px 8px;border-radius:4px;white-space:nowrap;}",
@@ -1517,6 +1566,7 @@ function buildGameHTML(layout){
     "<div id='wrap'><canvas id='gc'></canvas>",
     "<div id='hud'>",
     "  <div id='crosshair'></div><div id='targetHint'></div>",
+    "  <div id='radarRing'></div><div id='waypointLayer' aria-label='Searchlight waypoints'></div>",
     "  <div id='compassLabel'></div><div id='compass'></div>",
     "  <div id='cockpitBottom'></div><div id='shipIcon'>\uD83D\uDE80</div>",
     "</div></div>",
