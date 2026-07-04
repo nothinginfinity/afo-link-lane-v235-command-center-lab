@@ -1466,7 +1466,7 @@ function buildGameHTML(layout){
     "#searchCount{flex:1;color:#00ff88;font-size:11px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
     "#searchSelected{color:#dff;font-size:11px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:14px;opacity:.88;}",
     ".searchDeck:not(.open){align-self:center;padding:4px;border-color:rgba(0,255,136,0.16);background:transparent;box-shadow:none;}",
-    ".searchDeck:not(.open) .searchInput,.searchDeck:not(.open) .searchClear,.searchDeck:not(.open) .searchControls,.searchDeck:not(.open) #searchSelected{display:none;}"
+    ".searchDeck:not(.open) .searchInput,.searchDeck:not(.open) .searchClear,.searchDeck:not(.open) .searchControls,.searchDeck:not(.open) #searchSelected{display:none;}",
     ".searchDeck.open .searchIcon{background:rgba(0,255,136,0.24);color:#fff;box-shadow:0 0 12px rgba(0,255,136,0.22);}",
     ".flightRow{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;}",
     ".flightRow.travel{grid-template-columns:repeat(5,1fr);}",
