@@ -1,4 +1,4 @@
-const VERSION = "2.3.18.5-beam-reading-dock";
+const VERSION = "2.3.18.6-focus-card-carousel";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -1414,17 +1414,63 @@ function updateSearchFlight(){
   L.push("    }");
   L.push("  }");
   L.push("}");
-  L.push("function showFocusBar(){");
-  L.push("  const p=focus.mesh.userData;");
-  L.push("  document.getElementById('fbTitle').textContent=p.title||p.url||'';");
-  L.push("  document.getElementById('fbVisit').onclick=function(){openContentVisor(p);};");
-  L.push("  document.getElementById('focusBar').style.display='flex';");
-  L.push("}");
-  L.push("function closeFocus(){");
-  L.push("  if(!focus||focus.phase!=='focused') return;");
-  L.push("  document.getElementById('focusBar').style.display='none';");
-  L.push("  focus.phase='refold';focus.t=0;gameState='refolding';");
-  L.push("}");
+  L.push(String.raw`let focusCarousel={index:0,cards:[],node:null,open:false};
+function fcTypeLabel(p){return p&&p.domain==='youtube.com'?(p.is_short?'📱 SHORT':'🎬 VIDEO'):'🔗 LINK';}
+function fcCard(label,html){return {label:label,html:html};}
+function focusCardsFor(p){
+  const title=cvEscape((p&&p.title)||(p&&p.url)||'Untitled link');
+  const desc=cvEscape((p&&p.description)||'No saved description yet.');
+  const channel=cvEscape((p&&p.group_name)||(p&&p.domain)||'Source');
+  const type=cvEscape(fcTypeLabel(p));
+  const published=cvEscape((p&&p.published_at)||(p&&p.added_at)||'Unknown date');
+  const source=cvEscape((p&&p.domain)||(p&&p.url)||'Unknown source');
+  const image=p&&p.og_image_key?'<img class="fcImage" src="/og-image/'+cvEscape(p.id)+'" alt="preview">':'<div class="fcEmpty">No saved image preview</div>';
+  return [
+    fcCard('TITLE','<div class="fcText">'+title+'</div>'),
+    fcCard('IMAGE',image),
+    fcCard('CHANNEL','<div class="fcKicker">CHANNEL</div><div class="fcText small">'+channel+'</div>'),
+    fcCard('TYPE','<div class="fcKicker">TYPE</div><div class="fcText small">'+type+'</div>'),
+    fcCard('PUBLISHED','<div class="fcKicker">PUBLISHED</div><div class="fcText small">'+published+'</div>'),
+    fcCard('SOURCE','<div class="fcKicker">SOURCE</div><div class="fcText small">'+source+'</div><div class="fcDesc">'+desc+'</div>')
+  ];
+}
+function renderFocusCarousel(){
+  if(!focusCarousel.open)return;
+  const cards=focusCarousel.cards,idx=focusCarousel.index,card=cards[idx]||cards[0];
+  const label=document.getElementById('fcCardLabel'),body=document.getElementById('fcBody'),dots=document.getElementById('fcDots'),title=document.getElementById('fcMiniTitle');
+  if(label)label.textContent=(card&&card.label)||'CARD';
+  if(body)body.innerHTML='<section class="fcPanel">'+((card&&card.html)||'')+'</section>';
+  if(dots)dots.innerHTML=cards.map(function(c,i){return '<button type="button" class="fcDot '+(i===idx?'active':'')+'" onclick="focusCarouselGo('+i+')" aria-label="Show '+cvEscape(c.label)+'"></button>';}).join('');
+  if(title&&focusCarousel.node)title.textContent=focusCarousel.node.title||focusCarousel.node.url||'';
+}
+function openFocusCarousel(p){
+  const el=document.getElementById('focusCarousel');if(!el||!p)return;
+  focusCarousel.node=p;focusCarousel.cards=focusCardsFor(p);focusCarousel.index=0;focusCarousel.open=true;
+  el.classList.add('open');el.setAttribute('aria-hidden','false');renderFocusCarousel();
+}
+function closeFocusCarousel(silent){
+  const el=document.getElementById('focusCarousel');if(el){el.classList.remove('open');el.setAttribute('aria-hidden','true');}
+  focusCarousel.open=false;
+  if(!silent&&focus&&focus.phase==='focused')document.getElementById('focusBar').style.display='flex';
+}
+function focusCarouselGo(i){if(!focusCarousel.cards.length)return;focusCarousel.index=(i+focusCarousel.cards.length)%focusCarousel.cards.length;renderFocusCarousel();}
+function focusCarouselNext(){focusCarouselGo(focusCarousel.index+1);}
+function focusCarouselPrev(){focusCarouselGo(focusCarousel.index-1);}
+function focusCarouselVisit(){const p=focusCarousel.node;if(!p)return;closeFocusCarousel(true);openContentVisor(p);}
+function focusCarouselMark(kind){showToast((kind==='save'?'💾 Saved':'🕘 Added for later')+' for this session');}
+function showFocusBar(){
+  const p=focus.mesh.userData;
+  document.getElementById('fbTitle').textContent=p.title||p.url||'';
+  document.getElementById('fbVisit').onclick=function(){openContentVisor(p);};
+  document.getElementById('focusBar').style.display='flex';
+  openFocusCarousel(p);
+}
+function closeFocus(){
+  if(!focus||focus.phase!=='focused') return;
+  closeFocusCarousel(true);
+  document.getElementById('focusBar').style.display='none';
+  focus.phase='refold';focus.t=0;gameState='refolding';
+}`);
   L.push("function finishRefold(){");
   L.push("  const f=focus;");
   L.push("  f.planes.forEach(function(p){");
@@ -1435,7 +1481,7 @@ function updateSearchFlight(){
   L.push("  const eu=new THREE.Euler().setFromQuaternion(camera.quaternion,'YXZ');");
   L.push("  yaw=eu.y;pitch=Math.max(-PITCH_LIMIT,Math.min(PITCH_LIMIT,eu.x));");
   L.push("  camera.quaternion.setFromEuler(new THREE.Euler(pitch,yaw,0,'YXZ'));");
-  L.push("  focus=null;gameState='flying';");
+  L.push("  focus=null;gameState='flying';closeFocusCarousel(true);");
   L.push("}");
 
   L.push("function startTouch(x,y){touchActive=true;touchStartX=x;touchStartY=y;lastX=x;lastY=y;isTap=true;}");
@@ -1745,6 +1791,29 @@ function buildGameHTML(layout){
     "#cvActions{display:flex;gap:10px;width:100%;max-width:900px;margin:0 auto;padding-top:10px;border-top:1px solid rgba(255,255,255,.08);}",
     "#cvOpenOriginal{flex:1;text-align:center;text-decoration:none;background:transparent;color:#00ff88;border:1px solid rgba(0,255,136,.45);border-radius:10px;font-family:monospace;font-weight:bold;padding:12px;}",
     "#cvCloseBottom{flex:1;background:#111927;color:#cfe8f5;border:1px solid rgba(255,255,255,.12);border-radius:10px;font-family:monospace;font-weight:bold;padding:12px;}",
+    "#focusCarousel{display:none;position:fixed;top:0;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;z-index:430;background:rgba(2,0,12,.72);color:#fff;pointer-events:auto;flex-direction:column;padding:calc(12px + env(safe-area-inset-top)) 16px calc(14px + env(safe-area-inset-bottom));backdrop-filter:blur(3px);}",
+    "#focusCarousel.open{display:flex;}",
+    "#fcTop{display:grid;grid-template-columns:1fr 1fr 1fr;align-items:center;gap:8px;border-bottom:1px solid rgba(0,255,136,.45);padding-bottom:10px;}",
+    "#fcBack{justify-self:start;background:rgba(0,255,136,.08);color:#00ff88;border:1px solid rgba(0,255,136,.55);border-radius:9px;font-family:monospace;font-size:14px;padding:10px 13px;}",
+    "#fcCardLabel{justify-self:center;color:#ffdd00;font-weight:bold;letter-spacing:.22em;font-size:15px;}",
+    "#fcDots{justify-self:end;display:flex;gap:6px;align-items:center;}",
+    ".fcDot{width:8px;height:8px;border-radius:50%;border:0;background:rgba(255,255,255,.22);padding:0;}",
+    ".fcDot.active{background:#00ff88;box-shadow:0 0 10px rgba(0,255,136,.7);}",
+    "#fcMiniTitle{color:rgba(255,255,255,.7);font-size:11px;line-height:1.3;text-align:center;min-height:16px;margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+    "#fcBody{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:18px 0;}",
+    ".fcPanel{width:100%;display:flex;align-items:center;justify-content:center;text-align:center;min-height:42vh;}",
+    ".fcText{font-size:26px;line-height:1.45;letter-spacing:.04em;color:#f7f7ff;text-shadow:0 0 20px rgba(0,0,0,.8);max-width:92%;}",
+    ".fcText.small{font-size:19px;color:#d9f5ff;}",
+    ".fcKicker{color:#00ff88;font-weight:bold;letter-spacing:.14em;margin-bottom:18px;}",
+    ".fcDesc{margin-top:18px;color:#97adbb;font-size:12px;line-height:1.5;max-height:12vh;overflow:hidden;}",
+    ".fcImage{max-width:100%;max-height:46vh;object-fit:contain;border-radius:12px;box-shadow:0 0 38px rgba(0,0,0,.7);border:1px solid rgba(255,255,255,.08);}",
+    ".fcEmpty{width:100%;min-height:30vh;border:1px dashed rgba(0,255,136,.28);border-radius:14px;display:flex;align-items:center;justify-content:center;color:#6e8995;}",
+    "#fcActions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;}",
+    ".fcAction{min-height:45px;border-radius:8px;font-family:monospace;font-size:14px;background:rgba(0,255,136,.08);color:#00ff88;border:1px solid rgba(0,255,136,.45);}",
+    ".fcAction.later{background:rgba(255,210,0,.08);color:#ffdd55;border-color:rgba(255,210,0,.45);}",
+    "#fcNav{display:grid;grid-template-columns:56px 1fr 56px;gap:10px;align-items:center;}",
+    ".fcNavBtn{min-height:44px;border-radius:8px;background:rgba(255,255,255,.06);color:#dff;border:1px solid rgba(255,255,255,.18);font-family:monospace;font-size:24px;}",
+    "#fcVisit{min-height:48px;background:#00ff88;color:#00120a;border:0;border-radius:8px;font-family:monospace;font-size:18px;font-weight:bold;}",
     "</style></head><body>",
     "<div id='loadScreen'><div id='loadLogo'>LINK LANE</div><div id='loadText'>Initializing flight systems</div><div id='loadBarTrack'><div id='loadBar'></div></div></div>",
     "<div id='toast'></div>",
@@ -1813,6 +1882,13 @@ function buildGameHTML(layout){
     "<div id='focusBar'>",
     "  <div id='fbTitle'></div>",
     "  <div class='fbRow'><button id='fbVisit'>Visit \u2192</button><button id='fbClose' onclick='closeFocus()'>\u2715 Close</button></div>",
+    "</div>",
+    "<div id='focusCarousel' aria-hidden='true'>",
+    "  <div id='fcTop'><button type='button' id='fcBack' onclick='closeFocusCarousel()'>\\u2190 Back</button><div id='fcCardLabel'>TITLE</div><div id='fcDots'></div></div>",
+    "  <div id='fcMiniTitle'></div>",
+    "  <main id='fcBody'></main>",
+    "  <div id='fcActions'><button type='button' class='fcAction' onclick='focusCarouselMark(\\\"save\\\")'>💾 Save</button><button type='button' class='fcAction later' onclick='focusCarouselMark(\\\"later\\\")'>🕘 Later</button></div>",
+    "  <div id='fcNav'><button type='button' class='fcNavBtn' onclick='focusCarouselPrev()'>‹</button><button type='button' id='fcVisit' onclick='focusCarouselVisit()'>Visit \\u2192</button><button type='button' class='fcNavBtn' onclick='focusCarouselNext()'>›</button></div>",
     "</div>",
     "<div id='ov'>",
     "  <img id='ovImg' src='' alt='preview'>",
