@@ -1,0 +1,52 @@
+{
+  "worker": "afo-gitzip-patcher-mcp",
+  "version": "0.1.0-core",
+  "action": "apply_repo_text_patch",
+  "target": {
+    "owner": "nothinginfinity",
+    "repo": "afo-link-lane-v235-command-center-lab",
+    "branch": "main",
+    "path": "apps/afo-link-lane/worker.js"
+  },
+  "source_sha": "f1e373f561bc4ea00114331d1a782b060af326a4",
+  "result_sha": "8150ec2411c5870ea8ea6fbca5e1ecad5d998eb6",
+  "commit_sha": "406992bc17e1e9fe10796cc03513f039f04510a4",
+  "diff": {
+    "before_length": 119233,
+    "after_length": 119233,
+    "delta": 0,
+    "common_prefix": 47208,
+    "common_suffix": 71944,
+    "before_fingerprint": "854dfd85",
+    "after_fingerprint": "4772ec7f"
+  },
+  "applied": [
+    {
+      "label": "op_0",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_1",
+      "type": "replace_exact",
+      "changed": true
+    }
+  ],
+  "verification": {
+    "ok": true,
+    "results": [
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      }
+    ],
+    "failed": []
+  },
+  "timestamp": "2026-07-04T03:49:56.060Z"
+}
