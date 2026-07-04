@@ -1,4 +1,4 @@
-const VERSION = "2.3.13-spatial-searchlight";
+const VERSION = "2.3.14-search-fly-fix";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -1112,7 +1112,7 @@ function selectSearchResult(i,fly){
 }
 function nextSearchResult(){selectSearchResult(searchState.activeIndex+1,true);}
 function flyToSearchResult(){
-  const p=currentSearchNode();if(!p){showToast('No selected result');return;}
+  const p=currentSearchNode();if(!p){showToast('No selected result');return;}\n  const active=document.activeElement;if(active&&active.blur)active.blur();\n  gameState='flying';searchState.open=true;\n  const flyUI=document.getElementById('flyUI');if(flyUI)flyUI.style.display='flex';\n  const hud=document.getElementById('hud');if(hud)hud.style.display='block';
   if(!p.promoted)promoteNode(p.globalIdx);
   const mesh=p.mesh;
   if(mesh){loadTierFor(mesh,'full');maybeLoadLabelsFor(mesh,0,true);targeted=mesh;}
@@ -1122,7 +1122,7 @@ function flyToSearchResult(){
   const lm=new THREE.Matrix4().lookAt(toPos,target,new THREE.Vector3(0,1,0));
   const toQ=new THREE.Quaternion().setFromRotationMatrix(lm);
   searchState.cameraFlight={fromPos:camera.position.clone(),toPos:toPos,fromQ:camera.quaternion.clone(),toQ:toQ,t:0,nodeIdx:p.globalIdx};
-  speed=0;syncNavSpeed();clearNavHeld();showToast('Flying to search result');updateHUD();
+  speed=0;syncNavSpeed();clearNavHeld();showToast('Flying to search result');updateSearchUI();updateHUD();
 }
 function updateSearchFlight(){
   const f=searchState.cameraFlight;if(!f)return false;
