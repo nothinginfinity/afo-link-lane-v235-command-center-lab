@@ -1396,8 +1396,8 @@ function bindFlightHud(){
 }`);
 
   L.push("function updateHUD(){");
-  L.push("  const hint=document.getElementById('targetHint'),cross=document.getElementById('crosshair');
-  if(typeof updateSearchRadar==='function')updateSearchRadar();");
+  L.push("  const hint=document.getElementById('targetHint'),cross=document.getElementById('crosshair');");
+  L.push("  if(typeof updateSearchRadar==='function')updateSearchRadar();");
   L.push("  if(targeted){cross.classList.add('locked');hint.style.display='block';hint.textContent='TAP TO VIEW \u2014 '+(targeted.userData.title||targeted.userData.url||'link');}");
   L.push("  else{cross.classList.remove('locked');hint.style.display='none';}");
   L.push("  const sl=document.getElementById('speedLabel');");
