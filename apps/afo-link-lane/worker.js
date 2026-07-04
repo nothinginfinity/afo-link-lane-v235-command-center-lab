@@ -1,4 +1,4 @@
-const VERSION = "";
+const VERSION = "2.3.17-hud-radar-waypoints";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
