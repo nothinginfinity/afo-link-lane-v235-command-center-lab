@@ -1,0 +1,7 @@
+{
+  "schema": "afo.preserve_deploy.receipt.v1",
+  "script_name": "afo-link-lane-v235-lab",
+  "created_at": "2026-07-04T17:01:47.988Z",
+  "note": "post-deploy check placeholder",
+  "deployed": true
+}
