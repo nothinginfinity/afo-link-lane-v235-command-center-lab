@@ -1,0 +1,112 @@
+{
+  "worker": "afo-gitzip-patcher-mcp",
+  "version": "0.1.0-core",
+  "action": "apply_repo_text_patch",
+  "target": {
+    "owner": "nothinginfinity",
+    "repo": "afo-link-lane-v235-command-center-lab",
+    "branch": "main",
+    "path": "apps/afo-link-lane/worker.js"
+  },
+  "source_sha": "1d0fdfbdbf048a35c69996b8b263ba4a20b7bdc1",
+  "result_sha": "f1e373f561bc4ea00114331d1a782b060af326a4",
+  "commit_sha": "a8f5a65e0a97403f59ee8313df774fef177609d3",
+  "diff": {
+    "before_length": 110529,
+    "after_length": 119233,
+    "delta": 8704,
+    "common_prefix": 22,
+    "common_suffix": 17075,
+    "before_fingerprint": "03988902",
+    "after_fingerprint": "854dfd85"
+  },
+  "applied": [
+    {
+      "label": "op_0",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_1",
+      "type": "insert_after",
+      "changed": true
+    },
+    {
+      "label": "op_2",
+      "type": "insert_after",
+      "changed": true
+    },
+    {
+      "label": "op_3",
+      "type": "insert_after",
+      "changed": true
+    },
+    {
+      "label": "op_4",
+      "type": "insert_after",
+      "changed": true
+    },
+    {
+      "label": "op_5",
+      "type": "insert_after",
+      "changed": true
+    },
+    {
+      "label": "op_6",
+      "type": "insert_after",
+      "changed": true
+    },
+    {
+      "label": "op_7",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_8",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_9",
+      "type": "insert_after",
+      "changed": true
+    },
+    {
+      "label": "op_10",
+      "type": "insert_after",
+      "changed": true
+    }
+  ],
+  "verification": {
+    "ok": true,
+    "results": [
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      }
+    ],
+    "failed": []
+  },
+  "timestamp": "2026-07-04T03:47:57.901Z"
+}
