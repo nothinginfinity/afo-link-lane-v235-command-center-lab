@@ -1,0 +1,62 @@
+{
+  "worker": "afo-gitzip-patcher-mcp",
+  "version": "0.1.0-core",
+  "action": "apply_repo_text_patch",
+  "target": {
+    "owner": "nothinginfinity",
+    "repo": "afo-link-lane-v235-command-center-lab",
+    "branch": "main",
+    "path": "apps/afo-link-lane/COMMAND_CENTER_TODO.md"
+  },
+  "source_sha": "3fda7880958c3e9ee1232ef246e95b37468cc086",
+  "result_sha": "835bdb84b038b1635bc9a14a07be361fb3c4aa73",
+  "commit_sha": "6ae425846c9bcbc88388078f0c2164b8355f3471",
+  "diff": {
+    "before_length": 2522,
+    "after_length": 6741,
+    "delta": 4219,
+    "common_prefix": 2522,
+    "common_suffix": 0,
+    "before_fingerprint": "cc1ca7c2",
+    "after_fingerprint": "9c3ba65d"
+  },
+  "applied": [
+    {
+      "label": "op_0",
+      "type": "replace_exact",
+      "changed": true
+    }
+  ],
+  "verification": {
+    "ok": true,
+    "results": [
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      }
+    ],
+    "failed": []
+  },
+  "timestamp": "2026-07-04T15:37:21.282Z"
+}
