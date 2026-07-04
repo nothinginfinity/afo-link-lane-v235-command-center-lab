@@ -1,4 +1,4 @@
-const VERSION = "2.3.15-search-fly-escape-fix";
+const VERSION = "2.3.16-search-sequence-polish";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -1069,13 +1069,16 @@ function pulseSearchlight(){
   if(p&&p.mesh)p.mesh.scale.setScalar(searchScaleFor(idx,true));
 }
 function updateSearchUI(){
-  const deck=document.getElementById('searchDeck'),count=document.getElementById('searchCount'),input=document.getElementById('searchInput');
+  const deck=document.getElementById('searchDeck'),count=document.getElementById('searchCount'),input=document.getElementById('searchInput'),selected=document.getElementById('searchSelected');
   if(deck)deck.classList.toggle('open',searchState.open||Boolean(searchState.query));
   if(input&&document.activeElement!==input)input.value=searchState.query;
+  if(selected)selected.textContent='';
   if(!count)return;
   if(!searchState.query){count.textContent='Searchlight ready';return;}
   if(!searchState.matches.length){count.textContent='0 results';return;}
   count.textContent=(searchState.activeIndex+1)+' / '+searchState.matches.length+' results';
+  const p=currentSearchNode();
+  if(selected&&p){const title=String(p.title||p.domain||'Selected result').slice(0,72);const source=String(p.group_name||p.domain||'').slice(0,34);selected.textContent=title+(source?' · '+source:'');}
 }
 function toggleSearchDeck(force){
   searchState.open=typeof force==='boolean'?force:!searchState.open;
@@ -1110,6 +1113,7 @@ function selectSearchResult(i,fly){
   const p=currentSearchNode();if(p)showToast('Search result: '+String(p.title||p.domain||'link').slice(0,54));
   if(fly)flyToSearchResult();
 }
+function prevSearchResult(){selectSearchResult(searchState.activeIndex-1,true);}
 function nextSearchResult(){selectSearchResult(searchState.activeIndex+1,true);}
 function flyToSearchResult(){
   const p=currentSearchNode();if(!p){showToast('No selected result');return;}
@@ -1460,8 +1464,9 @@ function buildGameHTML(layout){
     ".searchInput:focus{border-color:#00ff88;box-shadow:0 0 12px rgba(0,255,136,0.18);}",
     ".searchControls{display:flex;gap:6px;align-items:center;}",
     "#searchCount{flex:1;color:#00ff88;font-size:11px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+    "#searchSelected{color:#dff;font-size:11px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:14px;opacity:.88;}",
     ".searchDeck:not(.open){align-self:center;padding:4px;border-color:rgba(0,255,136,0.16);background:transparent;box-shadow:none;}",
-    ".searchDeck:not(.open) .searchInput,.searchDeck:not(.open) .searchClear,.searchDeck:not(.open) .searchControls{display:none;}",
+    ".searchDeck:not(.open) .searchInput,.searchDeck:not(.open) .searchClear,.searchDeck:not(.open) .searchControls,.searchDeck:not(.open) #searchSelected{display:none;}"
     ".searchDeck.open .searchIcon{background:rgba(0,255,136,0.24);color:#fff;box-shadow:0 0 12px rgba(0,255,136,0.22);}",
     ".flightRow{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;}",
     ".flightRow.travel{grid-template-columns:repeat(5,1fr);}",
@@ -1541,9 +1546,11 @@ function buildGameHTML(layout){
     "    </div>",
     "    <div class='searchControls'>",
     "      <span id='searchCount'>Searchlight ready</span>",
+    "      <button type='button' class='searchBtn' onclick='prevSearchResult()'>Prev</button>",
     "      <button type='button' class='searchBtn' onclick='nextSearchResult()'>Next</button>",
     "      <button type='button' class='searchBtn' onclick='flyToSearchResult()'>Fly</button>",
     "    </div>",
+    "    <div id='searchSelected'></div>",
     "  </div>",
     "    <div class='flightRow'>",
     "      <button type='button' class='flightBtn orbitBtn' data-nav='orbitLeft'>⟲ ORBIT</button>",
