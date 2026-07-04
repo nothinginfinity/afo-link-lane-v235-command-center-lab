@@ -1,4 +1,4 @@
-const VERSION = "2.3.18-search-galaxy-preview";
+const VERSION = "2.3.18.1-mobile-search-controls";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -709,7 +709,7 @@ function budgetedPixelRatio(){return RENDER_BUDGET.pixelRatio;}`);
   L.push("function onResize(){const wrap=document.getElementById('wrap');camera.aspect=wrap.clientWidth/wrap.clientHeight;camera.updateProjectionMatrix();renderer.setSize(wrap.clientWidth,wrap.clientHeight);}");
 
   L.push("function buildStarfield(){");
-  L.push("  const n=2500;const pos=new Float32Array(n*3);");
+  L.push("  const n=0;const pos=new Float32Array(n*3); // v2.3.18.1: decorative stars disabled so real link nodes are easier to see");
   L.push("  for(let i=0;i<n;i++){");
   L.push("    const r=2000+Math.random()*1800;");
   L.push("    const th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);");
@@ -1203,8 +1203,9 @@ function selectSearchResult(i,fly){
   const p=currentSearchNode();if(p)showToast('Search result: '+String(p.title||p.domain||'link').slice(0,54));
   if(fly)flyToSearchResult();
 }
-function prevSearchResult(){selectSearchResult(searchState.activeIndex-1,true);}
-function nextSearchResult(){selectSearchResult(searchState.activeIndex+1,true);}
+function searchButtonAction(e,fn){if(e){e.preventDefault();e.stopPropagation();}try{const a=document.activeElement;if(a&&a.blur)a.blur();}catch(err){}fn();return false;}
+function prevSearchResult(){selectSearchResult(searchState.activeIndex-1,false);}
+function nextSearchResult(){selectSearchResult(searchState.activeIndex+1,false);}
 function flyToSearchResult(){
   const p=currentSearchNode();if(!p){showToast('No selected result');return;}
   const active=document.activeElement;if(active&&active.blur)active.blur();
@@ -1558,13 +1559,16 @@ function buildGameHTML(layout){
     ".flightHud{display:flex;flex-direction:column;gap:5px;padding:6px;border:1px solid rgba(0,255,255,0.22);border-radius:12px;background:linear-gradient(180deg,rgba(0,20,28,0.72),rgba(0,5,12,0.72));box-shadow:0 0 18px rgba(0,255,255,0.12) inset,0 0 22px rgba(0,255,255,0.08);}",
     ".searchDeck{display:flex;flex-direction:column;gap:5px;padding:6px;border:1px solid rgba(0,255,136,0.22);border-radius:12px;background:linear-gradient(180deg,rgba(0,24,16,0.72),rgba(0,5,12,0.72));box-shadow:0 0 18px rgba(0,255,136,0.10) inset;}",
     ".searchTop{display:flex;gap:6px;align-items:center;}",
-    ".searchIcon,.searchClear,.searchBtn{background:rgba(0,255,136,0.10);color:#9fdbb9;border:1px solid rgba(0,255,136,0.34);font-family:monospace;font-weight:bold;border-radius:10px;min-height:40px;padding:0 10px;touch-action:manipulation;}",
+    ".searchIcon,.searchClear,.searchBtn{background:rgba(0,255,136,0.10);color:#9fdbb9;border:1px solid rgba(0,255,136,0.34);font-family:monospace;font-weight:bold;border-radius:10px;min-height:42px;padding:0 10px;touch-action:manipulation;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}",
+    ".searchBtn{cursor:pointer;min-width:0;font-size:11px;}",
+    ".searchBtn:active{background:rgba(0,255,136,0.24);color:#fff;transform:translateY(1px);}",
     ".searchBtn:disabled{opacity:.35;cursor:not-allowed;}",
     ".searchIcon{min-width:44px;font-size:16px;}",
     ".searchInput{flex:1;min-width:0;background:rgba(0,0,0,0.55);color:#dff;border:1px solid rgba(0,255,255,0.24);border-radius:10px;min-height:40px;padding:0 10px;font-family:monospace;font-size:13px;outline:none;}",
     ".searchInput:focus{border-color:#00ff88;box-shadow:0 0 12px rgba(0,255,136,0.18);}",
-    ".searchControls{display:flex;gap:6px;align-items:center;}",
-    "#searchCount{flex:1;color:#00ff88;font-size:11px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+    ".searchControls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;align-items:stretch;}",
+    "#searchCount{grid-column:1/-1;color:#00ff88;font-size:11px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+    "#clusterSearchBtn,#returnUniverseBtn{grid-column:1/-1;}",
     "#searchSelected{color:#dff;font-size:11px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:14px;opacity:.88;}",
     ".searchDeck:not(.open){align-self:center;padding:4px;border-color:rgba(0,255,136,0.16);background:transparent;box-shadow:none;}",
     ".searchDeck:not(.open) .searchInput,.searchDeck:not(.open) .searchClear,.searchDeck:not(.open) .searchControls,.searchDeck:not(.open) #searchSelected{display:none;}",
@@ -1648,11 +1652,11 @@ function buildGameHTML(layout){
     "    </div>",
     "    <div class='searchControls'>",
     "      <span id='searchCount'>Searchlight ready</span>",
-    "      <button type='button' class='searchBtn' onclick='prevSearchResult()'>Prev</button>",
-    "      <button type='button' class='searchBtn' onclick='nextSearchResult()'>Next</button>",
-    "      <button type='button' class='searchBtn' onclick='flyToSearchResult()'>Fly</button>",
-    "      <button type='button' id='clusterSearchBtn' class='searchBtn' onclick='clusterSearchResults()'>Cluster Results</button>",
-    "      <button type='button' id='returnUniverseBtn' class='searchBtn' onclick='returnToUniverse()' style='display:none'>Return to Universe</button>",
+    "      <button type='button' class='searchBtn' onclick='return searchButtonAction(event,prevSearchResult)'>Prev</button>",
+    "      <button type='button' class='searchBtn' onclick='return searchButtonAction(event,nextSearchResult)'>Next</button>",
+    "      <button type='button' class='searchBtn' onclick='return searchButtonAction(event,flyToSearchResult)'>Fly</button>",
+    "      <button type='button' id='clusterSearchBtn' class='searchBtn' onclick='return searchButtonAction(event,clusterSearchResults)'>Cluster Results</button>",
+    "      <button type='button' id='returnUniverseBtn' class='searchBtn' onclick='return searchButtonAction(event,returnToUniverse)' style='display:none'>Return to Universe</button>",
     "    </div>",
     "    <div id='searchSelected'></div>",
     "  </div>",
