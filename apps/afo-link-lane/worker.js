@@ -1,4 +1,4 @@
-const VERSION = "2.3.18.3-tractor-beam-restore";
+const VERSION = "2.3.18.4-visible-beam-button";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -1079,9 +1079,10 @@ function plainAimLabel(p,max){
   const n=max||80;return raw.length>n?raw.slice(0,n-1)+'…':raw;
 }
 function updateAimUI(){
-  const btn=document.getElementById('magnetBtn'),tractorBtn=document.getElementById('tractorBtn'),restoreBtn=document.getElementById('restoreTractorBtn');
+  const btn=document.getElementById('magnetBtn'),beamBtn=document.getElementById('tractorQuickBtn'),tractorBtn=document.getElementById('tractorBtn'),restoreBtn=document.getElementById('restoreTractorBtn');
   const n=aimState.selected.size;
   if(btn){btn.classList.toggle('active',aimState.magnet);btn.classList.toggle('hasLocks',n>0);btn.textContent=n?('🧲 '+n):'🧲';btn.title=n?(n+' locked link'+(n===1?'':'s')):'Aim lock selector';}
+  if(beamBtn){beamBtn.disabled=n<1;beamBtn.classList.toggle('active',aimState.tractorActive);beamBtn.textContent=aimState.tractorActive?'Re-Beam':'Beam';beamBtn.title=n?('Stage '+n+' locked link'+(n===1?'':'s')):'Lock links with the magnet first';}
   if(tractorBtn){tractorBtn.disabled=n<1;tractorBtn.textContent=aimState.tractorActive?('Re-Tractor '+n):('Tractor '+n);}
   if(restoreBtn)restoreBtn.style.display=aimState.tractorActive?'inline-flex':'none';
 }
@@ -1673,6 +1674,10 @@ function buildGameHTML(layout){
     ".searchIcon{min-width:44px;font-size:16px;}",
     ".magnetBtn.active{background:rgba(255,190,80,0.24);border-color:#ffcc66;color:#fff;box-shadow:0 0 12px rgba(255,190,80,0.26);}",
     ".magnetBtn.hasLocks{color:#fff;border-color:#ffeeaa;}",
+    ".beamBtn{min-width:66px;font-size:12px;padding:0 10px;letter-spacing:.04em;}",
+    ".beamBtn:not(:disabled){border-color:#ffeeaa;color:#fff;background:rgba(255,190,80,0.16);box-shadow:0 0 10px rgba(255,190,80,0.22);}",
+    ".beamBtn.active{border-color:#fff;background:rgba(255,220,120,0.24);}",
+    ".beamBtn:disabled{opacity:.42;}",
     ".searchInput{flex:1;min-width:0;background:rgba(0,0,0,0.55);color:#dff;border:1px solid rgba(0,255,255,0.24);border-radius:10px;min-height:40px;padding:0 10px;font-family:monospace;font-size:13px;outline:none;}",
     ".searchInput:focus{border-color:#00ff88;box-shadow:0 0 12px rgba(0,255,136,0.18);}",
     ".searchControls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;align-items:stretch;}",
@@ -1757,6 +1762,7 @@ function buildGameHTML(layout){
     "    <div class='searchTop'>",
     "      <button type='button' id='searchToggle' class='searchIcon' onclick='toggleSearchDeck()'>⌕</button>",
     "      <button type='button' id='magnetBtn' class='searchIcon magnetBtn' onclick='return searchButtonAction(event,toggleMagnetMode)' title='Aim lock selector'>🧲</button>",
+    "      <button type='button' id='tractorQuickBtn' class='searchIcon beamBtn' onclick='return searchButtonAction(event,tractorBeamSelected)' disabled title='Beam locked links'>Beam</button>",
     "      <input id='searchInput' class='searchInput' type='search' inputmode='search' placeholder='Search AI, WebAssembly, arXiv...' oninput='updateSearchQuery(this.value)' onfocus='toggleSearchDeck(true)'>",
     "      <button type='button' class='searchClear' onclick='clearSearch()'>×</button>",
     "    </div>",
