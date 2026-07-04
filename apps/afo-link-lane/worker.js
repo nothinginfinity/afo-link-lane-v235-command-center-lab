@@ -1046,7 +1046,14 @@ function nodePosition(p,out){
   if(p&&p.mesh){out.copy(p.mesh.position);return out;}
   out.set((p&&p.x)||0,(p&&p.y)||0,(p&&p.z)||0);return out;
 }
-function waypointLabel(p){return String((p&&p.title)||(p&&p.domain)||'result').replace(/[&<>\"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c];});}
+function waypointLabel(p){return String((p&&p.title)||(p&&p.domain)||'result').replace(/[&<>"']/g,function(c){
+  if(c==='&')return '&amp;';
+  if(c==='<')return '&lt;';
+  if(c==='>')return '&gt;';
+  if(c==='"')return '&quot;';
+  return '&#39;';
+});
+}
 function selectWaypointResult(matchPos){selectSearchResult(matchPos,true);}
 function updateSearchRadar(){
   const layer=document.getElementById('waypointLayer'),ring=document.getElementById('radarRing');
