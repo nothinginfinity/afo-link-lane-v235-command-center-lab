@@ -804,10 +804,10 @@ function budgetedPixelRatio(){return RENDER_BUDGET.pixelRatio;}`);
   L.push("    });");
   L.push("  }");
   L.push("  farMesh.instanceMatrix.needsUpdate=true;");
+  L.push("  applySearchlight();");
   L.push("}");
 
   L.push("function applyFormation(name){");
-  L.push("  applySearchlight();");
   L.push("  if(!FORMATIONS[name]) return;");
   L.push("  currentFormation=name;");
   L.push("  repositionAll();");
