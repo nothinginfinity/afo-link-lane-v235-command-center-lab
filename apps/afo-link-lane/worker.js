@@ -1,4 +1,4 @@
-const VERSION = "2.3.10-api-import-alias";
+const VERSION = "2.3.11-mobile-flight-hud";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -659,6 +659,8 @@ function buildGameScript(layout){
   L.push("let insideGalaxy=null;");
   L.push("let gameState='menu';");
   L.push("let speed=3;");
+  L.push(String.raw`const navState={speed:3,yaw:0,orbit:0,panX:0,panY:0,held:{},braking:false};
+const NAV_LIMITS={minSpeed:-6,maxSpeed:14,speedStep:1,holdSpeedStep:0.14,yawStep:0.1,orbitStep:0.12,panStep:22,holdYawStep:0.022,holdOrbitStep:0.026,holdPanStep:4.2};`);
   L.push("let yaw=0,pitch=0,yawVel=0,pitchVel=0;");
   L.push("const PITCH_LIMIT=1.3;");
   L.push("const MAX_PROMOTED=400;");
@@ -1131,13 +1133,65 @@ function buildGameScript(layout){
   L.push("canvas.addEventListener('mousemove',function(e){if(!touchActive)return;const r=canvas.getBoundingClientRect();moveTouch(e.clientX-r.left,e.clientY-r.top);});");
   L.push("window.addEventListener('mouseup',function(){endTouch();});");
 
+  L.push(String.raw`function clearNavHeld(){navState.held={};document.querySelectorAll('.flightBtn.held').forEach(function(b){b.classList.remove('held');});}
+function clampFlightSpeed(v){return Math.max(NAV_LIMITS.minSpeed,Math.min(NAV_LIMITS.maxSpeed,v));}
+function syncNavSpeed(){navState.speed=speed;}
+function adjustSpeed(d,announce){speed=clampFlightSpeed(speed+d);syncNavSpeed();if(announce!==false)showToast(speed===0?'■ Cruise off':('speed '+speed.toFixed(1)+'x'));updateHUD();}
+function fullStop(){speed=0;syncNavSpeed();clearNavHeld();showToast('■ Flight stopped');updateHUD();}
+function nudgeNav(kind){
+  if(kind==='speedUp'){adjustSpeed(NAV_LIMITS.speedStep);return;}
+  if(kind==='speedDown'){adjustSpeed(-NAV_LIMITS.speedStep);return;}
+  if(kind==='stop'){fullStop();return;}
+  if(kind==='turnLeft')navState.yaw+=NAV_LIMITS.yawStep;
+  if(kind==='turnRight')navState.yaw-=NAV_LIMITS.yawStep;
+  if(kind==='orbitLeft')navState.orbit+=NAV_LIMITS.orbitStep;
+  if(kind==='orbitRight')navState.orbit-=NAV_LIMITS.orbitStep;
+  if(kind==='panLeft')navState.panX-=NAV_LIMITS.panStep;
+  if(kind==='panRight')navState.panX+=NAV_LIMITS.panStep;
+}
+function applyNavHold(){
+  if(navState.held.speedUp)adjustSpeed(NAV_LIMITS.holdSpeedStep,false);
+  if(navState.held.speedDown)adjustSpeed(-NAV_LIMITS.holdSpeedStep,false);
+  if(navState.held.turnLeft)navState.yaw+=NAV_LIMITS.holdYawStep;
+  if(navState.held.turnRight)navState.yaw-=NAV_LIMITS.holdYawStep;
+  if(navState.held.orbitLeft)navState.orbit+=NAV_LIMITS.holdOrbitStep;
+  if(navState.held.orbitRight)navState.orbit-=NAV_LIMITS.holdOrbitStep;
+  if(navState.held.panLeft)navState.panX-=NAV_LIMITS.holdPanStep;
+  if(navState.held.panRight)navState.panX+=NAV_LIMITS.holdPanStep;
+}
+function orbitCamera(amount){
+  if(!amount)return;
+  const pivot=targeted?targeted.position:new THREE.Vector3(0,0,0);
+  const offset=camera.position.clone().sub(pivot);
+  offset.applyAxisAngle(new THREE.Vector3(0,1,0),amount);
+  camera.position.copy(pivot).add(offset);
+  yaw+=amount;
+}
+function applyFlightNav(){
+  applyNavHold();
+  if(navState.panX||navState.panY){camera.translateX(navState.panX);camera.translateY(navState.panY);navState.panX=0;navState.panY=0;}
+  if(navState.orbit){orbitCamera(navState.orbit);navState.orbit=0;}
+}
+function bindFlightHud(){
+  const hud=document.getElementById('flightHud');if(!hud||hud._bound)return;hud._bound=true;
+  hud.querySelectorAll('[data-nav]').forEach(function(btn){
+    const kind=btn.dataset.nav;
+    const release=function(e){if(e)e.preventDefault();delete navState.held[kind];btn.classList.remove('held');};
+    btn.addEventListener('pointerdown',function(e){e.preventDefault();if(kind==='stop'){fullStop();return;}nudgeNav(kind);navState.held[kind]=true;btn.classList.add('held');try{btn.setPointerCapture(e.pointerId);}catch(err){};});
+    btn.addEventListener('pointerup',release);
+    btn.addEventListener('pointercancel',release);
+    btn.addEventListener('pointerleave',release);
+  });
+}`);
+
   L.push("function updateHUD(){");
   L.push("  const hint=document.getElementById('targetHint'),cross=document.getElementById('crosshair');");
   L.push("  if(targeted){cross.classList.add('locked');hint.style.display='block';hint.textContent='TAP TO VIEW \u2014 '+(targeted.userData.title||targeted.userData.url||'link');}");
   L.push("  else{cross.classList.remove('locked');hint.style.display='none';}");
   L.push("  const sl=document.getElementById('speedLabel');");
-  L.push("  sl.textContent=speed===0?'\u23F8 STOPPED':speed<0?'\u25C0 REVERSE '+Math.abs(speed).toFixed(1)+'x':'\uD83D\uDE80 '+speed.toFixed(1)+'x';");
-  L.push("  sl.style.color=speed<0?'#ffaa44':'#888';");
+  L.push("  if(sl){sl.textContent=speed===0?'\\u23F8 STOPPED':speed<0?'\\u25C0 REVERSE '+Math.abs(speed).toFixed(1)+'x':'\\uD83D\\uDE80 '+speed.toFixed(1)+'x';sl.style.color=speed<0?'#ffaa44':'#888';}");
+  L.push("  const fs=document.getElementById('flightStatus');");
+  L.push("  if(fs){const mode=speed===0?'cruise off':(speed>0?'cruise forward':'cruise reverse');fs.textContent='speed: '+speed.toFixed(1)+'x / '+mode;}");
   L.push("  const arrow=document.getElementById('compass');");
   L.push("  if(clusterMode==='supercluster'){");
   L.push("    arrow.style.display='none'; document.getElementById('compassLabel').textContent='';");
@@ -1161,8 +1215,11 @@ function buildGameScript(layout){
   L.push("function update(){");
   L.push("  if(gameState!=='flying') return;");
   L.push("  frame++;");
-  L.push("  yaw+=yawVel;pitch=Math.max(-PITCH_LIMIT,Math.min(PITCH_LIMIT,pitch+pitchVel));");
+  L.push("  applyNavHold();");
+  L.push("  yaw+=yawVel+navState.yaw;navState.yaw=0;pitch=Math.max(-PITCH_LIMIT,Math.min(PITCH_LIMIT,pitch+pitchVel));");
   L.push("  camera.quaternion.setFromEuler(new THREE.Euler(pitch,yaw,0,'YXZ'));");
+  L.push("  if(navState.panX||navState.panY){camera.translateX(navState.panX);camera.translateY(navState.panY);navState.panX=0;navState.panY=0;}");
+  L.push("  if(navState.orbit){orbitCamera(navState.orbit);navState.orbit=0;camera.quaternion.setFromEuler(new THREE.Euler(pitch,yaw,0,'YXZ'));}");
   L.push("  camera.translateZ(-speed);");
   L.push("  yawVel*=0.85;pitchVel*=0.85;");
   L.push("  updateTarget();updateLOD();billboardCubes();");
@@ -1177,15 +1234,14 @@ function buildGameScript(layout){
   L.push("function drawMenuBg(){}");
   L.push("function loop(){update();updateFocus();renderer.render(scene,camera);requestAnimationFrame(loop);}");
 
-  L.push("function adjustSpeed(d){speed=Math.max(-6,Math.min(14,speed+d));}");
-  L.push("function fullStop(){speed=0;showToast('\u23F8 Stopped');}");
   L.push("function startFlying(){");
   L.push("  if(LAYOUT.links.length===0){alert('Add some links at /admin first');return;}");
   L.push("  gameState='flying';");
   L.push("  document.getElementById('menuUI').style.display='none';");
   L.push("  document.getElementById('flyUI').style.display='flex';");
   L.push("  document.getElementById('hud').style.display='block';");
-  L.push("  setTimeout(function(){showToast('\uD83E\uDD0F Pinch together = forward, apart = reverse');},800);");
+  L.push("  bindFlightHud();updateHUD();");
+  L.push("  setTimeout(function(){showToast('Flight HUD ready: hold buttons to cruise');},800);");
   L.push("}");
 
   L.push("initScene();loop();");
@@ -1231,17 +1287,22 @@ function buildGameHTML(layout){
     "#menuUI p{color:#4488aa;font-size:12px;}",
     "#startBtn{background:#00ff88;color:#000;border:none;padding:14px 36px;font-family:monospace;font-size:16px;font-weight:bold;border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent;}",
     "#statBadge{color:#00ff88;font-size:12px;background:rgba(0,255,136,0.1);border:1px solid #00ff88;padding:6px 14px;border-radius:6px;}",
-    "#flyUI{width:100%;max-width:480px;background:rgba(0,0,0,0.85);border-top:1px solid rgba(0,255,255,0.2);backdrop-filter:blur(20px);padding:8px 10px;display:none;flex-direction:column;gap:6px;}",
-    ".speedRow{display:flex;align-items:center;justify-content:space-between;gap:6px;}",
+    "#flyUI{width:100%;max-width:480px;background:rgba(0,0,0,0.88);border-top:1px solid rgba(0,255,255,0.2);backdrop-filter:blur(20px);padding:8px 10px calc(8px + env(safe-area-inset-bottom));display:none;flex-direction:column;gap:6px;}",
     ".fmtRow{display:flex;gap:5px;justify-content:center;}",
+    ".flightHud{display:flex;flex-direction:column;gap:5px;padding:6px;border:1px solid rgba(0,255,255,0.22);border-radius:12px;background:linear-gradient(180deg,rgba(0,20,28,0.72),rgba(0,5,12,0.72));box-shadow:0 0 18px rgba(0,255,255,0.12) inset,0 0 22px rgba(0,255,255,0.08);}",
+    ".flightRow{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;}",
+    ".flightRow.travel{grid-template-columns:repeat(5,1fr);}",
+    ".flightBtn{min-height:44px;background:rgba(0,255,255,0.07);color:#9ff;border:1px solid rgba(0,255,255,0.28);font-family:monospace;font-size:10px;font-weight:bold;border-radius:10px;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:none;user-select:none;letter-spacing:.02em;}",
+    ".flightBtn:active,.flightBtn.held{background:rgba(0,255,255,0.22);color:#fff;box-shadow:0 0 14px rgba(0,255,255,0.28);transform:translateY(1px);}",
+    ".flightBtn.speedBtn{background:rgba(0,255,136,0.08);border-color:rgba(0,255,136,0.35);color:#9fdbb9;}",
+    ".flightBtn.stopBtn{background:rgba(170,30,30,0.2);border-color:#bb3333;color:#ff7777;}",
+    "#flightStatus{color:#00ff88;font-size:11px;text-align:center;letter-spacing:.06em;text-transform:uppercase;min-height:16px;}",
+    "@media(max-height:700px){#wrap{height:55dvh}.flightBtn{min-height:40px;font-size:9px}#flyUI{gap:4px;padding-top:6px}}", 
     ".clusterBtn{background:rgba(255,140,0,0.06);color:#fa8;border:1px solid rgba(255,140,0,0.3);font-size:11px;padding:6px 12px;border-radius:12px;cursor:pointer;-webkit-tap-highlight-color:transparent;font-family:monospace;flex:1;}",
     ".clusterBtn.active{background:rgba(255,140,0,0.25);border-color:#ff8c00;color:#fff;box-shadow:0 0 10px rgba(255,140,0,0.3);}",
     ".fmtBtn{background:rgba(0,255,255,0.06);color:#7ab;border:1px solid rgba(0,255,255,0.25);font-size:10px;padding:5px 10px;border-radius:12px;cursor:pointer;-webkit-tap-highlight-color:transparent;font-family:monospace;}",
     ".fmtBtn.active{background:rgba(0,255,255,0.25);border-color:#00ffff;color:#fff;box-shadow:0 0 10px rgba(0,255,255,0.3);}",
-    ".sBtn{background:rgba(0,255,255,0.06);color:#fff;border:1px solid rgba(0,255,255,0.25);font-size:15px;padding:9px 14px;border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent;font-family:monospace;}",
-    ".sBtn:active{background:rgba(0,255,255,0.18);}",
-    ".sBtn.stopBtn{background:rgba(170,30,30,0.15);border-color:#aa3333;color:#ff6666;font-size:12px;padding:9px 10px;}",
-    "#speedLabel{color:#888;font-size:11px;text-align:center;flex:1;}",
+
     "#adminLink{color:#222;font-size:10px;padding:4px;text-align:center;width:100%;max-width:480px;}",
     "#adminLink a{color:#222;}",
     "#focusBar{display:none;position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:rgba(0,0,0,0.88);border-top:1px solid rgba(0,255,136,0.35);backdrop-filter:blur(14px);padding:12px 16px calc(12px + env(safe-area-inset-bottom));flex-direction:column;gap:10px;z-index:250;}",
@@ -1298,11 +1359,21 @@ function buildGameHTML(layout){
     "    <button class='fmtBtn' data-f='cube' onclick='applyFormation(\"cube\")'>Cube</button>",
     "    <button class='fmtBtn' data-f='torus' onclick='applyFormation(\"torus\")'>Torus</button>",
     "  </div>",
-    "  <div class='speedRow'>",
-    "    <button class='sBtn' onclick='adjustSpeed(-1)'>\u23F4</button>",
-    "    <button class='sBtn stopBtn' onclick='fullStop()'>\u23F9 STOP</button>",
-    "    <div id='speedLabel'>\uD83D\uDE80 3.0x</div>",
-    "    <button class='sBtn' onclick='adjustSpeed(1)'>\u23E9</button>",
+    "  <div id='flightHud' class='flightHud' aria-label='Mobile Flight HUD'>",
+    "    <div class='flightRow'>",
+    "      <button type='button' class='flightBtn orbitBtn' data-nav='orbitLeft'>⟲ ORBIT</button>",
+    "      <button type='button' class='flightBtn turnBtn' data-nav='turnLeft'>◀ TURN</button>",
+    "      <button type='button' class='flightBtn turnBtn' data-nav='turnRight'>TURN ▶</button>",
+    "      <button type='button' class='flightBtn orbitBtn' data-nav='orbitRight'>ORBIT ⟳</button>",
+    "    </div>",
+    "    <div class='flightRow travel'>",
+    "      <button type='button' class='flightBtn panBtn' data-nav='panLeft'>◀ PAN</button>",
+    "      <button type='button' class='flightBtn speedBtn' data-nav='speedDown'>− SPD</button>",
+    "      <button type='button' class='flightBtn stopBtn' data-nav='stop'>■ STOP</button>",
+    "      <button type='button' class='flightBtn speedBtn' data-nav='speedUp'>+ SPD</button>",
+    "      <button type='button' class='flightBtn panBtn' data-nav='panRight'>PAN ▶</button>",
+    "    </div>",
+    "    <div id='flightStatus'>speed: 0.0x / cruise off</div>",
     "  </div>",
     "</div>",
     "<div id='adminLink'><a href='/admin'>add links</a></div>",
