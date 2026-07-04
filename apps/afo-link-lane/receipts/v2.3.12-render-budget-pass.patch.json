@@ -1,0 +1,147 @@
+{
+  "worker": "afo-gitzip-patcher-mcp",
+  "version": "0.1.0-core",
+  "action": "apply_repo_text_patch",
+  "target": {
+    "owner": "nothinginfinity",
+    "repo": "afo-link-lane-v235-command-center-lab",
+    "branch": "main",
+    "path": "apps/afo-link-lane/worker.js"
+  },
+  "source_sha": "723f78513c8bb6a3ddf6c1a0a4b827ee0dc3735f",
+  "result_sha": "1d0fdfbdbf048a35c69996b8b263ba4a20b7bdc1",
+  "commit_sha": "decd59c3d6740f8fe39909bde830c40ae7495fc9",
+  "diff": {
+    "before_length": 106008,
+    "after_length": 110529,
+    "delta": 4521,
+    "common_prefix": 22,
+    "common_suffix": 30667,
+    "before_fingerprint": "e90346be",
+    "after_fingerprint": "03988902"
+  },
+  "applied": [
+    {
+      "label": "op_0",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_1",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_2",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_3",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_4",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_5",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_6",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_7",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_8",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_9",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_10",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_11",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_12",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_13",
+      "type": "replace_exact",
+      "changed": true
+    },
+    {
+      "label": "op_14",
+      "type": "replace_exact",
+      "changed": true
+    }
+  ],
+  "verification": {
+    "ok": true,
+    "results": [
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      }
+    ],
+    "failed": []
+  },
+  "timestamp": "2026-07-04T02:16:25.832Z"
+}
