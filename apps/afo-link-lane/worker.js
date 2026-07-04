@@ -1,4 +1,4 @@
-const VERSION = "2.3.12-render-budget-pass";
+const VERSION = "2.3.13-spatial-searchlight";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -661,6 +661,8 @@ function buildGameScript(layout){
   L.push("let speed=3;");
   L.push(String.raw`const navState={speed:3,yaw:0,orbit:0,panX:0,panY:0,held:{},braking:false};
 const NAV_LIMITS={minSpeed:-6,maxSpeed:14,speedStep:1,holdSpeedStep:0.14,yawStep:0.1,orbitStep:0.12,panStep:22,holdYawStep:0.022,holdOrbitStep:0.026,holdPanStep:4.2};`);
+  L.push(String.raw`const searchState={open:false,query:'',matches:[],matchSet:new Set(),activeIndex:-1,cameraFlight:null};
+const _searchPos=new THREE.Vector3(),_searchScale=new THREE.Vector3(1,1,1),_searchQuat=new THREE.Quaternion(),_searchM4=new THREE.Matrix4(),_searchTmp=new THREE.Vector3();`);
   L.push("let yaw=0,pitch=0,yawVel=0,pitchVel=0;");
   L.push("const PITCH_LIMIT=1.3;");
   L.push(String.raw`const RENDER_BUDGET=(function(){
@@ -805,6 +807,7 @@ function budgetedPixelRatio(){return RENDER_BUDGET.pixelRatio;}`);
   L.push("}");
 
   L.push("function applyFormation(name){");
+  L.push("  applySearchlight();");
   L.push("  if(!FORMATIONS[name]) return;");
   L.push("  currentFormation=name;");
   L.push("  repositionAll();");
@@ -911,8 +914,10 @@ function budgetedPixelRatio(){return RENDER_BUDGET.pixelRatio;}`);
   L.push("  const mesh=new THREE.Mesh(geo,materials);");
   L.push("  mesh.position.set(p.x,p.y,p.z);");
   L.push("  mesh.userData=p;");
+  L.push("  p.mesh=mesh;");
   L.push("  scene.add(mesh);");
   L.push("  planetMeshes.push(mesh);");
+  L.push("  applySearchlight();");
   L.push("}");
 
   L.push("function loadLabelsFor(mesh){");
@@ -1030,6 +1035,102 @@ function maybeLoadLabelsFor(mesh,dist,force){if(!mesh||mesh.userData.labelsLoade
   L.push("  if(targeted) maybeLoadLabelsFor(targeted,0,true);");
   L.push("}");
   L.push("function trySelect(){if(targeted) startFocus(targeted);}");
+  L.push(String.raw`
+function normalizeSearchText(s){return String(s||'').toLowerCase().normalize('NFKD').replace(/[^a-z0-9@._:-]+/g,' ').trim();}
+function nodeSearchText(p){
+  const type=p.domain==='youtube.com'?(p.is_short?'short video':'video'):'link article';
+  return normalizeSearchText([p.title,p.description,p.domain,p.group_name,type,p.published_at,p.added_at,p.url].join(' '));
+}
+function nodePosition(p,out){
+  if(p&&p.mesh){out.copy(p.mesh.position);return out;}
+  out.set((p&&p.x)||0,(p&&p.y)||0,(p&&p.z)||0);return out;
+}
+function searchScaleFor(idx,pulse){
+  if(!searchState.query)return 1;
+  if(!searchState.matchSet.has(idx))return 0.32;
+  const selected=searchState.activeIndex>=0&&searchState.matches[searchState.activeIndex]===idx;
+  if(selected)return pulse?1.72+Math.sin(performance.now()*0.007)*0.18:1.82;
+  return 1.38;
+}
+function applySearchlight(){
+  const hasQuery=Boolean(searchState.query);
+  planetMeshes.forEach(function(mesh){const idx=mesh.userData.globalIdx;const s=hasQuery?searchScaleFor(idx,false):1;mesh.scale.setScalar(s);});
+  if(!farMesh)return;
+  nodeData.forEach(function(p){
+    if(p.promoted||p.farSlot<0)return;
+    const s=hasQuery?searchScaleFor(p.globalIdx,false):1;
+    _searchPos.set(p.x,p.y,p.z);_searchScale.set(s,s,s);_searchM4.compose(_searchPos,_searchQuat,_searchScale);farMesh.setMatrixAt(p.farSlot,_searchM4);
+  });
+  farMesh.instanceMatrix.needsUpdate=true;
+}
+function pulseSearchlight(){
+  if(!searchState.query||searchState.activeIndex<0)return;
+  const idx=searchState.matches[searchState.activeIndex],p=nodeData[idx];
+  if(p&&p.mesh)p.mesh.scale.setScalar(searchScaleFor(idx,true));
+}
+function updateSearchUI(){
+  const deck=document.getElementById('searchDeck'),count=document.getElementById('searchCount'),input=document.getElementById('searchInput');
+  if(deck)deck.classList.toggle('open',searchState.open||Boolean(searchState.query));
+  if(input&&document.activeElement!==input)input.value=searchState.query;
+  if(!count)return;
+  if(!searchState.query){count.textContent='Searchlight ready';return;}
+  if(!searchState.matches.length){count.textContent='0 results';return;}
+  count.textContent=(searchState.activeIndex+1)+' / '+searchState.matches.length+' results';
+}
+function toggleSearchDeck(force){
+  searchState.open=typeof force==='boolean'?force:!searchState.open;
+  updateSearchUI();
+  if(searchState.open){const input=document.getElementById('searchInput');if(input)setTimeout(function(){input.focus();input.select();},30);}
+}
+function computeSearchMatches(){
+  const q=normalizeSearchText(searchState.query);
+  if(!q){searchState.matches=[];searchState.matchSet=new Set();searchState.activeIndex=-1;searchState.cameraFlight=null;applySearchlight();updateSearchUI();return;}
+  const terms=q.split(/\s+/).filter(Boolean);
+  const ranked=[];
+  nodeData.forEach(function(p,idx){
+    const hay=p._searchText||(p._searchText=nodeSearchText(p));
+    const ok=terms.every(function(term){return hay.indexOf(term)!==-1;});
+    if(!ok)return;
+    const dist=nodePosition(p,_searchTmp).distanceTo(camera.position);
+    ranked.push({idx:idx,dist:dist,title:String(p.title||''),date:String(p.published_at||p.added_at||'')});
+  });
+  ranked.sort(function(a,b){return a.dist-b.dist||b.date.localeCompare(a.date)||a.title.localeCompare(b.title);});
+  searchState.matches=ranked.map(function(r){return r.idx;});
+  searchState.matchSet=new Set(searchState.matches);
+  searchState.activeIndex=searchState.matches.length?0:-1;
+  applySearchlight();updateSearchUI();
+}
+function updateSearchQuery(q){searchState.query=String(q||'').trim();computeSearchMatches();}
+function clearSearch(){searchState.query='';const input=document.getElementById('searchInput');if(input)input.value='';computeSearchMatches();showToast('Searchlight cleared');}
+function currentSearchNode(){if(searchState.activeIndex<0)return null;return nodeData[searchState.matches[searchState.activeIndex]]||null;}
+function selectSearchResult(i,fly){
+  if(!searchState.matches.length){showToast('No search results');return;}
+  searchState.activeIndex=(i+searchState.matches.length)%searchState.matches.length;
+  applySearchlight();updateSearchUI();
+  const p=currentSearchNode();if(p)showToast('Search result: '+String(p.title||p.domain||'link').slice(0,54));
+  if(fly)flyToSearchResult();
+}
+function nextSearchResult(){selectSearchResult(searchState.activeIndex+1,true);}
+function flyToSearchResult(){
+  const p=currentSearchNode();if(!p){showToast('No selected result');return;}
+  if(!p.promoted)promoteNode(p.globalIdx);
+  const mesh=p.mesh;
+  if(mesh){loadTierFor(mesh,'full');maybeLoadLabelsFor(mesh,0,true);targeted=mesh;}
+  const target=nodePosition(p,new THREE.Vector3());
+  let dir=camera.position.clone().sub(target);if(dir.lengthSq()<1)dir.set(0,0,1);dir.normalize();
+  const toPos=target.clone().add(dir.multiplyScalar(190));
+  const lm=new THREE.Matrix4().lookAt(toPos,target,new THREE.Vector3(0,1,0));
+  const toQ=new THREE.Quaternion().setFromRotationMatrix(lm);
+  searchState.cameraFlight={fromPos:camera.position.clone(),toPos:toPos,fromQ:camera.quaternion.clone(),toQ:toQ,t:0,nodeIdx:p.globalIdx};
+  speed=0;syncNavSpeed();clearNavHeld();showToast('Flying to search result');updateHUD();
+}
+function updateSearchFlight(){
+  const f=searchState.cameraFlight;if(!f)return false;
+  f.t=Math.min(1,f.t+0.035);const e=easeIO(f.t);
+  camera.position.lerpVectors(f.fromPos,f.toPos,e);camera.quaternion.slerpQuaternions(f.fromQ,f.toQ,e);
+  if(f.t>=1){const eu=new THREE.Euler().setFromQuaternion(camera.quaternion,'YXZ');yaw=eu.y;pitch=Math.max(-PITCH_LIMIT,Math.min(PITCH_LIMIT,eu.x));searchState.cameraFlight=null;targeted=nodeData[f.nodeIdx]&&nodeData[f.nodeIdx].mesh?nodeData[f.nodeIdx].mesh:targeted;}
+  return true;
+}`);
 
   L.push("function openLink(p){");
   L.push("  const ov=document.getElementById('ov');if(!ov)return;");
@@ -1271,6 +1372,7 @@ function bindFlightHud(){
   L.push("function update(){");
   L.push("  if(gameState!=='flying') return;");
   L.push("  frame++;");
+  L.push("  if(updateSearchFlight()){updateLOD();billboardCubes();if(frame%4===0){updateHUD();pulseSearchlight();}return;}");
   L.push("  applyNavHold();");
   L.push("  yaw+=yawVel+navState.yaw;navState.yaw=0;pitch=Math.max(-PITCH_LIMIT,Math.min(PITCH_LIMIT,pitch+pitchVel));");
   L.push("  camera.quaternion.setFromEuler(new THREE.Euler(pitch,yaw,0,'YXZ'));");
@@ -1288,7 +1390,7 @@ function bindFlightHud(){
   L.push("}");
 
   L.push("function drawMenuBg(){}");
-  L.push("function loop(){if(!contextLost){update();updateFocus();renderer.render(scene,camera);}requestAnimationFrame(loop);}");
+  L.push("function loop(){if(!contextLost){update();updateFocus();pulseSearchlight();renderer.render(scene,camera);}requestAnimationFrame(loop);}");
 
   L.push("function startFlying(){");
   L.push("  if(LAYOUT.links.length===0){alert('Add some links at /admin first');return;}");
@@ -1297,7 +1399,7 @@ function bindFlightHud(){
   L.push("  document.getElementById('flyUI').style.display='flex';");
   L.push("  document.getElementById('hud').style.display='block';");
   L.push("  bindFlightHud();updateHUD();");
-  L.push("  setTimeout(function(){showToast('Flight HUD ready: hold buttons to cruise');},800);");
+  L.push("  setTimeout(function(){showToast('Flight HUD ready: searchlight online');},800);");
   L.push("}");
 
   L.push("initScene();loop();");
@@ -1346,6 +1448,17 @@ function buildGameHTML(layout){
     "#flyUI{width:100%;max-width:480px;background:rgba(0,0,0,0.88);border-top:1px solid rgba(0,255,255,0.2);backdrop-filter:blur(20px);padding:8px 10px calc(8px + env(safe-area-inset-bottom));display:none;flex-direction:column;gap:6px;}",
     ".fmtRow{display:flex;gap:5px;justify-content:center;}",
     ".flightHud{display:flex;flex-direction:column;gap:5px;padding:6px;border:1px solid rgba(0,255,255,0.22);border-radius:12px;background:linear-gradient(180deg,rgba(0,20,28,0.72),rgba(0,5,12,0.72));box-shadow:0 0 18px rgba(0,255,255,0.12) inset,0 0 22px rgba(0,255,255,0.08);}",
+    ".searchDeck{display:flex;flex-direction:column;gap:5px;padding:6px;border:1px solid rgba(0,255,136,0.22);border-radius:12px;background:linear-gradient(180deg,rgba(0,24,16,0.72),rgba(0,5,12,0.72));box-shadow:0 0 18px rgba(0,255,136,0.10) inset;}",
+    ".searchTop{display:flex;gap:6px;align-items:center;}",
+    ".searchIcon,.searchClear,.searchBtn{background:rgba(0,255,136,0.10);color:#9fdbb9;border:1px solid rgba(0,255,136,0.34);font-family:monospace;font-weight:bold;border-radius:10px;min-height:40px;padding:0 10px;touch-action:manipulation;}",
+    ".searchIcon{min-width:44px;font-size:16px;}",
+    ".searchInput{flex:1;min-width:0;background:rgba(0,0,0,0.55);color:#dff;border:1px solid rgba(0,255,255,0.24);border-radius:10px;min-height:40px;padding:0 10px;font-family:monospace;font-size:13px;outline:none;}",
+    ".searchInput:focus{border-color:#00ff88;box-shadow:0 0 12px rgba(0,255,136,0.18);}",
+    ".searchControls{display:flex;gap:6px;align-items:center;}",
+    "#searchCount{flex:1;color:#00ff88;font-size:11px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+    ".searchDeck:not(.open){align-self:center;padding:4px;border-color:rgba(0,255,136,0.16);background:transparent;box-shadow:none;}",
+    ".searchDeck:not(.open) .searchInput,.searchDeck:not(.open) .searchClear,.searchDeck:not(.open) .searchControls{display:none;}",
+    ".searchDeck.open .searchIcon{background:rgba(0,255,136,0.24);color:#fff;box-shadow:0 0 12px rgba(0,255,136,0.22);}",
     ".flightRow{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;}",
     ".flightRow.travel{grid-template-columns:repeat(5,1fr);}",
     ".flightBtn{min-height:44px;background:rgba(0,255,255,0.07);color:#9ff;border:1px solid rgba(0,255,255,0.28);font-family:monospace;font-size:10px;font-weight:bold;border-radius:10px;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:none;user-select:none;letter-spacing:.02em;}",
@@ -1416,6 +1529,18 @@ function buildGameHTML(layout){
     "    <button class='fmtBtn' data-f='torus' onclick='applyFormation(\"torus\")'>Torus</button>",
     "  </div>",
     "  <div id='flightHud' class='flightHud' aria-label='Mobile Flight HUD'>",
+    "  <div id='searchDeck' class='searchDeck' aria-label='Cosmic Searchlight'>",
+    "    <div class='searchTop'>",
+    "      <button type='button' id='searchToggle' class='searchIcon' onclick='toggleSearchDeck()'>⌕</button>",
+    "      <input id='searchInput' class='searchInput' type='search' inputmode='search' placeholder='Search AI, WebAssembly, arXiv...' oninput='updateSearchQuery(this.value)' onfocus='toggleSearchDeck(true)'>",
+    "      <button type='button' class='searchClear' onclick='clearSearch()'>×</button>",
+    "    </div>",
+    "    <div class='searchControls'>",
+    "      <span id='searchCount'>Searchlight ready</span>",
+    "      <button type='button' class='searchBtn' onclick='nextSearchResult()'>Next</button>",
+    "      <button type='button' class='searchBtn' onclick='flyToSearchResult()'>Fly</button>",
+    "    </div>",
+    "  </div>",
     "    <div class='flightRow'>",
     "      <button type='button' class='flightBtn orbitBtn' data-nav='orbitLeft'>⟲ ORBIT</button>",
     "      <button type='button' class='flightBtn turnBtn' data-nav='turnLeft'>◀ TURN</button>",
