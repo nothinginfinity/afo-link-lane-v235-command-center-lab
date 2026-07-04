@@ -1,4 +1,4 @@
-const VERSION = "2.3.18.1-mobile-search-controls";
+const VERSION = "2.3.18.2-aim-lock-selector";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -1018,10 +1018,26 @@ function maybeLoadLabelsFor(mesh,dist,force){if(!mesh||mesh.userData.labelsLoade
   L.push("  }");
   L.push("}");
 
-  L.push("const _toMesh=new THREE.Vector3(),_fwd=new THREE.Vector3();");
+  L.push("const _toMesh=new THREE.Vector3(),_fwd=new THREE.Vector3(),_aimWorld=new THREE.Vector3(),_aimNdc=new THREE.Vector3();");
+  L.push("const aimState={magnet:false,hoverIdx:-1,hoverDist:0,selected:new Set()};");
   L.push("function updateTarget(){");
   L.push("  camera.getWorldDirection(_fwd);");
-  L.push("  let best=null,bestScore=Infinity;");
+  L.push("  let bestMesh=null,bestMeshScore=Infinity,bestIdx=-1,bestScore=Infinity,bestDist=0;");
+  L.push("  const aimRadius=aimState.magnet?0.24:0.16;");
+  L.push("  for(let i=0;i<nodeData.length;i++){");
+  L.push("    const p=nodeData[i];if(!p)continue;");
+  L.push("    nodePosition(p,_aimWorld);");
+  L.push("    _toMesh.copy(_aimWorld).sub(camera.position);");
+  L.push("    const dist=_toMesh.length();if(dist<1)continue;");
+  L.push("    _toMesh.multiplyScalar(1/dist);");
+  L.push("    const dot=_toMesh.dot(_fwd);if(dot<=0.04)continue;");
+  L.push("    _aimNdc.copy(_aimWorld).project(camera);");
+  L.push("    if(_aimNdc.z<0||_aimNdc.z>1)continue;");
+  L.push("    const r=Math.sqrt(_aimNdc.x*_aimNdc.x+_aimNdc.y*_aimNdc.y);");
+  L.push("    if(r>aimRadius)continue;");
+  L.push("    const score=r+Math.min(dist,6000)*0.000015;");
+  L.push("    if(score<bestScore){bestScore=score;bestIdx=i;bestDist=dist;}");
+  L.push("  }");
   L.push("  for(let i=0;i<planetMeshes.length;i++){");
   L.push("    const mesh=planetMeshes[i];");
   L.push("    _toMesh.copy(mesh.position).sub(camera.position);");
@@ -1031,12 +1047,15 @@ function maybeLoadLabelsFor(mesh,dist,force){if(!mesh||mesh.userData.labelsLoade
   L.push("    const dot=_toMesh.dot(_fwd);");
   L.push("    if(dot<0.85) continue;");
   L.push("    const score=(1-dot)+dist*0.0006;");
-  L.push("    if(score<bestScore){bestScore=score;best=mesh;}");
+  L.push("    if(score<bestMeshScore){bestMeshScore=score;bestMesh=mesh;}");
   L.push("  }");
-  L.push("  targeted=best;");
+  L.push("  targeted=bestMesh;");
+  L.push("  const changed=aimState.hoverIdx!==bestIdx;");
+  L.push("  aimState.hoverIdx=bestIdx;aimState.hoverDist=bestDist;");
   L.push("  if(targeted) maybeLoadLabelsFor(targeted,0,true);");
+  L.push("  if(changed){applySearchlight();updateAimUI();}");
   L.push("}");
-  L.push("function trySelect(){if(targeted) startFocus(targeted);}");
+  L.push("function trySelect(){if(aimState.magnet){toggleAimLock();return;}if(targeted) startFocus(targeted);}");
   L.push(String.raw`
 function normalizeSearchText(s){return String(s||'').toLowerCase().normalize('NFKD').replace(/[^a-z0-9@._:-]+/g,' ').trim();}
 function nodeSearchText(p){
@@ -1054,6 +1073,24 @@ function waypointLabel(p){return String((p&&p.title)||(p&&p.domain)||'result').r
   if(c==='"')return '&quot;';
   return '&#39;';
 });
+}
+function plainAimLabel(p,max){
+  const raw=String((p&&p.title)||(p&&p.domain)||(p&&p.url)||'link').replace(/\s+/g,' ').trim();
+  const n=max||80;return raw.length>n?raw.slice(0,n-1)+'…':raw;
+}
+function updateAimUI(){
+  const btn=document.getElementById('magnetBtn');
+  const n=aimState.selected.size;
+  if(btn){btn.classList.toggle('active',aimState.magnet);btn.classList.toggle('hasLocks',n>0);btn.textContent=n?('🧲 '+n):'🧲';btn.title=n?(n+' locked link'+(n===1?'':'s')):'Aim lock selector';}
+}
+function toggleMagnetMode(){aimState.magnet=!aimState.magnet;updateAimUI();updateHUD();showToast(aimState.magnet?'🧲 Aim lock on: aim and tap links':'🧲 Aim lock off');}
+function toggleAimLock(){
+  const idx=aimState.hoverIdx;
+  if(idx<0){showToast('Aim at a link first');return;}
+  const p=nodeData[idx];if(!p)return;
+  if(aimState.selected.has(idx)){aimState.selected.delete(idx);showToast('Unlocked: '+plainAimLabel(p,42));}
+  else{aimState.selected.add(idx);showToast('Locked: '+plainAimLabel(p,42));}
+  applySearchlight();updateAimUI();updateHUD();
 }
 function selectWaypointResult(matchPos){selectSearchResult(matchPos,true);}
 function updateSearchRadar(){
@@ -1132,6 +1169,10 @@ function clusterSearchResults(){
   applySearchlight();updateSearchUI();showToast('Search Galaxy Preview: '+matches.length+' temporary results');
 }
 function searchScaleFor(idx,pulse){
+  const locked=aimState&&aimState.selected&&aimState.selected.has(idx);
+  const hovered=aimState&&aimState.hoverIdx===idx;
+  if(locked)return pulse?1.75+Math.sin(performance.now()*0.009)*0.12:1.78;
+  if(hovered)return pulse?1.55+Math.sin(performance.now()*0.01)*0.08:1.58;
   if(!searchState.query)return 1;
   if(!searchState.matchSet.has(idx))return 0.32;
   const selected=searchState.activeIndex>=0&&searchState.matches[searchState.activeIndex]===idx;
@@ -1139,20 +1180,19 @@ function searchScaleFor(idx,pulse){
   return 1.38;
 }
 function applySearchlight(){
-  const hasQuery=Boolean(searchState.query);
-  planetMeshes.forEach(function(mesh){const idx=mesh.userData.globalIdx;const s=hasQuery?searchScaleFor(idx,false):1;mesh.scale.setScalar(s);});
+  planetMeshes.forEach(function(mesh){const idx=mesh.userData.globalIdx;const s=searchScaleFor(idx,false);mesh.scale.setScalar(s);});
   if(!farMesh)return;
   nodeData.forEach(function(p){
     if(p.promoted||p.farSlot<0)return;
-    const s=hasQuery?searchScaleFor(p.globalIdx,false):1;
+    const s=searchScaleFor(p.globalIdx,false);
     _searchPos.set(p.x,p.y,p.z);_searchScale.set(s,s,s);_searchM4.compose(_searchPos,_searchQuat,_searchScale);farMesh.setMatrixAt(p.farSlot,_searchM4);
   });
   farMesh.instanceMatrix.needsUpdate=true;
 }
 function pulseSearchlight(){
-  if(!searchState.query||searchState.activeIndex<0)return;
-  const idx=searchState.matches[searchState.activeIndex],p=nodeData[idx];
-  if(p&&p.mesh)p.mesh.scale.setScalar(searchScaleFor(idx,true));
+  if(searchState.query&&searchState.activeIndex>=0){const idx=searchState.matches[searchState.activeIndex],p=nodeData[idx];if(p&&p.mesh)p.mesh.scale.setScalar(searchScaleFor(idx,true));}
+  if(aimState.hoverIdx>=0){const hp=nodeData[aimState.hoverIdx];if(hp&&hp.mesh)hp.mesh.scale.setScalar(searchScaleFor(aimState.hoverIdx,true));}
+  aimState.selected.forEach(function(idx){const p=nodeData[idx];if(p&&p.mesh)p.mesh.scale.setScalar(searchScaleFor(idx,true));});
 }
 function updateSearchUI(){
   const deck=document.getElementById('searchDeck'),count=document.getElementById('searchCount'),input=document.getElementById('searchInput'),selected=document.getElementById('searchSelected');
@@ -1163,6 +1203,7 @@ function updateSearchUI(){
   if(returnBtn)returnBtn.style.display=searchState.clusterActive?'inline-flex':'none';
   if(selected)selected.textContent='';
   if(typeof updateSearchRadar==='function')updateSearchRadar();
+  updateAimUI();
   if(!count)return;
   if(!searchState.query){count.textContent='Searchlight ready';return;}
   if(!searchState.matches.length){count.textContent='0 results';return;}
@@ -1462,6 +1503,33 @@ function bindFlightHud(){
   L.push("  }");
   L.push("}");
 
+  L.push(String.raw`function updateHUD(){
+  const hint=document.getElementById('targetHint'),cross=document.getElementById('crosshair');
+  if(typeof updateSearchRadar==='function')updateSearchRadar();
+  const aimIdx=aimState.hoverIdx,aimNode=aimIdx>=0?nodeData[aimIdx]:null,aimLocked=aimIdx>=0&&aimState.selected.has(aimIdx);
+  if(cross){cross.classList.toggle('locked',Boolean(targeted));cross.classList.toggle('aimHover',Boolean(aimNode));cross.classList.toggle('aimMagnet',aimState.magnet);cross.classList.toggle('aimSelected',aimLocked);}
+  if(hint){
+    if(aimNode){hint.style.display='block';hint.textContent=(aimState.magnet?(aimLocked?'🧲 LOCKED — ':'🧲 AIM — '):(targeted?'TAP TO VIEW — ':'AIM — '))+plainAimLabel(aimNode,78)+(aimState.magnet?(aimLocked?' · tap to unlock':' · tap to lock'):'');}
+    else if(aimState.magnet){hint.style.display='block';hint.textContent='🧲 AIM LOCK — point at a link and tap';}
+    else{hint.style.display='none';}
+  }
+  const sl=document.getElementById('speedLabel');
+  if(sl){sl.textContent=speed===0?'\\u23F8 STOPPED':speed<0?'\\u25C0 REVERSE '+Math.abs(speed).toFixed(1)+'x':'\\uD83D\\uDE80 '+speed.toFixed(1)+'x';sl.style.color=speed<0?'#ffaa44':'#888';}
+  const fs=document.getElementById('flightStatus');
+  if(fs){const mode=speed===0?'cruise off':(speed>0?'cruise forward':'cruise reverse');fs.textContent='speed: '+speed.toFixed(1)+'x / '+mode;}
+  const arrow=document.getElementById('compass');
+  if(clusterMode==='supercluster'){
+    arrow.style.display='none'; document.getElementById('compassLabel').textContent='';
+  } else {
+    let nearest=null,nd=Infinity;
+    LAYOUT.galaxies.forEach(function(g){const d=camera.position.distanceTo(new THREE.Vector3(g.x,g.y,g.z));if(d<nd&&d>g.radius+80){nd=d;nearest=g;}});
+    if(nearest){const v=new THREE.Vector3(nearest.x,nearest.y,nearest.z).project(camera);const ang=Math.atan2(v.y,v.x);
+      arrow.style.display='block';arrow.style.transform='translate(-50%,-50%) rotate('+(-ang)+'rad)';
+      document.getElementById('compassLabel').textContent=nearest.name+' — '+Math.round(nd)+'u';
+    } else { arrow.style.display='none'; document.getElementById('compassLabel').textContent=''; }
+  }
+}`);
+
   L.push("function billboardCubes(){");
   L.push("  planetMeshes.forEach(function(mesh){");
   L.push("    const dx=camera.position.x-mesh.position.x,dz=camera.position.z-mesh.position.z;");
@@ -1532,9 +1600,12 @@ function buildGameHTML(layout){
     "#wrap{position:relative;width:100%;max-width:480px;height:62vh;height:62dvh;background:#000;}",
     "#gc{display:block;width:100%;height:100%;touch-action:none;}",
     "#hud{display:none;position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;}",
-    "#crosshair{position:absolute;top:50%;left:50%;width:26px;height:26px;margin:-13px 0 0 -13px;border:2px solid rgba(255,255,255,0.4);border-radius:50%;transition:border-color 0.15s,transform 0.15s;}",
-    "#crosshair.locked{border-color:#00ff88;transform:scale(1.3);box-shadow:0 0 14px rgba(0,255,136,0.6);}",
-    "#targetHint{display:none;position:absolute;top:54%;left:50%;transform:translateX(-50%);color:#00ff88;font-size:12px;background:rgba(0,0,0,0.6);padding:4px 10px;border-radius:4px;white-space:nowrap;}",
+    "#crosshair{position:absolute;top:50%;left:50%;width:26px;height:26px;margin:-13px 0 0 -13px;border:2px solid rgba(255,255,255,0.4);border-radius:50%;transition:border-color 0.15s,transform 0.15s,box-shadow 0.15s;}",
+    "#crosshair.locked{border-color:#00ff88;transform:scale(1.28);box-shadow:0 0 14px rgba(0,255,136,0.6);}",
+    "#crosshair.aimHover{border-color:#9ff;transform:scale(1.18);box-shadow:0 0 16px rgba(0,255,255,0.38);}",
+    "#crosshair.aimMagnet{border-color:#ffcc66;box-shadow:0 0 18px rgba(255,190,80,0.44);}",
+    "#crosshair.aimSelected{border-color:#fff;transform:scale(1.4);box-shadow:0 0 22px rgba(255,220,120,0.7);}",
+    "#targetHint{display:none;position:absolute;top:54%;left:50%;transform:translateX(-50%);color:#bfffe3;font-size:12px;background:rgba(0,0,0,0.72);border:1px solid rgba(0,255,136,0.28);padding:5px 10px;border-radius:6px;white-space:normal;max-width:92%;text-align:center;line-height:1.35;}",
     "#radarRing{display:none;position:absolute;top:50%;left:50%;width:112px;height:112px;margin:-56px 0 0 -56px;border:1px solid rgba(0,255,136,.34);border-radius:50%;box-shadow:0 0 24px rgba(0,255,136,.14),inset 0 0 18px rgba(0,255,136,.08);z-index:12;}",
     "#radarRing:before,#radarRing:after{content:'';position:absolute;background:rgba(0,255,136,.22);}",
     "#radarRing:before{left:50%;top:8px;bottom:8px;width:1px;}",
@@ -1564,6 +1635,8 @@ function buildGameHTML(layout){
     ".searchBtn:active{background:rgba(0,255,136,0.24);color:#fff;transform:translateY(1px);}",
     ".searchBtn:disabled{opacity:.35;cursor:not-allowed;}",
     ".searchIcon{min-width:44px;font-size:16px;}",
+    ".magnetBtn.active{background:rgba(255,190,80,0.24);border-color:#ffcc66;color:#fff;box-shadow:0 0 12px rgba(255,190,80,0.26);}",
+    ".magnetBtn.hasLocks{color:#fff;border-color:#ffeeaa;}",
     ".searchInput{flex:1;min-width:0;background:rgba(0,0,0,0.55);color:#dff;border:1px solid rgba(0,255,255,0.24);border-radius:10px;min-height:40px;padding:0 10px;font-family:monospace;font-size:13px;outline:none;}",
     ".searchInput:focus{border-color:#00ff88;box-shadow:0 0 12px rgba(0,255,136,0.18);}",
     ".searchControls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;align-items:stretch;}",
@@ -1647,6 +1720,7 @@ function buildGameHTML(layout){
     "  <div id='searchDeck' class='searchDeck' aria-label='Cosmic Searchlight'>",
     "    <div class='searchTop'>",
     "      <button type='button' id='searchToggle' class='searchIcon' onclick='toggleSearchDeck()'>⌕</button>",
+    "      <button type='button' id='magnetBtn' class='searchIcon magnetBtn' onclick='return searchButtonAction(event,toggleMagnetMode)' title='Aim lock selector'>🧲</button>",
     "      <input id='searchInput' class='searchInput' type='search' inputmode='search' placeholder='Search AI, WebAssembly, arXiv...' oninput='updateSearchQuery(this.value)' onfocus='toggleSearchDeck(true)'>",
     "      <button type='button' class='searchClear' onclick='clearSearch()'>×</button>",
     "    </div>",
