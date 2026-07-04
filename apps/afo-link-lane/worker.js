@@ -1,4 +1,4 @@
-const VERSION = "2.3.17-hud-radar-waypoints";
+const VERSION = "2.3.18-search-galaxy-preview";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -662,6 +662,7 @@ function buildGameScript(layout){
   L.push(String.raw`const navState={speed:3,yaw:0,orbit:0,panX:0,panY:0,held:{},braking:false};
 const NAV_LIMITS={minSpeed:-6,maxSpeed:14,speedStep:1,holdSpeedStep:0.14,yawStep:0.1,orbitStep:0.12,panStep:22,holdYawStep:0.022,holdOrbitStep:0.026,holdPanStep:4.2};`);
   L.push(String.raw`const searchState={open:false,query:'',matches:[],matchSet:new Set(),activeIndex:-1,cameraFlight:null};
+searchState.clusterActive=false;searchState.clusterOriginals=null;searchState.clusterCount=0;
 const _searchPos=new THREE.Vector3(),_searchScale=new THREE.Vector3(1,1,1),_searchQuat=new THREE.Quaternion(),_searchM4=new THREE.Matrix4(),_searchTmp=new THREE.Vector3();
 const _radarWorld=new THREE.Vector3(),_radarRight=new THREE.Vector3(),_radarUp=new THREE.Vector3(),_radarFwd=new THREE.Vector3();`);
   L.push("let yaw=0,pitch=0,yawVel=0,pitchVel=0;");
@@ -1090,6 +1091,46 @@ function updateSearchRadar(){
     return '<button type="button" class="searchWaypoint'+(w.active?' active':'')+'" style="left:'+w.x.toFixed(1)+'px;top:'+w.y.toFixed(1)+'px;--ang:'+w.ang.toFixed(4)+'rad" onclick="selectWaypointResult('+w.matchPos+')" aria-label="Fly to search result: '+w.label+'" title="'+w.label+'"><span>➤</span><b>'+(i+1)+'</b></button>';
   }).join('');
 }
+function searchGalaxyPoint(i,n,r){
+  if(n<=1)return {x:0,y:0,z:0};
+  const golden=Math.PI*(3-Math.sqrt(5));
+  const y=1-(i/(n-1))*2;
+  const rr=Math.sqrt(Math.max(0,1-y*y));
+  const theta=golden*i;
+  return {x:Math.cos(theta)*rr*r,y:y*r,z:Math.sin(theta)*rr*r};
+}
+function setNodeVisualPosition(p,x,y,z){
+  if(!p)return;
+  p.x=x;p.y=y;p.z=z;
+  if(p.mesh)p.mesh.position.set(x,y,z);
+  if(farMesh&&p.farSlot>=0){
+    const s=searchState.query?searchScaleFor(p.globalIdx,false):1;
+    _searchPos.set(x,y,z);_searchScale.set(s,s,s);_searchM4.compose(_searchPos,_searchQuat,_searchScale);farMesh.setMatrixAt(p.farSlot,_searchM4);farMesh.instanceMatrix.needsUpdate=true;
+  }
+}
+function restoreSearchGalaxyPreview(silent){
+  if(!searchState.clusterActive&&!searchState.clusterOriginals)return;
+  const originals=searchState.clusterOriginals||{};
+  Object.keys(originals).forEach(function(k){const p=nodeData[Number(k)],o=originals[k];if(p&&o)setNodeVisualPosition(p,o.x,o.y,o.z);});
+  searchState.clusterActive=false;searchState.clusterOriginals=null;searchState.clusterCount=0;
+  applySearchlight();
+  if(!silent)showToast('Returned to universe');
+  updateSearchUI();
+}
+function returnToUniverse(){if(!searchState.clusterActive){showToast('Already in universe');return;}restoreSearchGalaxyPreview(false);}
+function clusterSearchResults(){
+  if(!searchState.query||!searchState.matches.length){showToast('Search first to cluster results');return;}
+  if(searchState.clusterActive)restoreSearchGalaxyPreview(true);
+  const matches=searchState.matches.slice(0,Math.min(searchState.matches.length,160));
+  const originals={};
+  camera.updateMatrixWorld();
+  const forward=new THREE.Vector3();camera.getWorldDirection(forward);
+  const center=camera.position.clone().add(forward.multiplyScalar(520));
+  const radius=Math.max(90,Math.min(420,24*Math.sqrt(matches.length)));
+  matches.forEach(function(idx,i){const p=nodeData[idx];if(!p)return;originals[idx]={x:p.x,y:p.y,z:p.z};const off=searchGalaxyPoint(i,matches.length,radius);setNodeVisualPosition(p,center.x+off.x,center.y+off.y,center.z+off.z);});
+  searchState.clusterActive=true;searchState.clusterOriginals=originals;searchState.clusterCount=matches.length;
+  applySearchlight();updateSearchUI();showToast('Search Galaxy Preview: '+matches.length+' temporary results');
+}
 function searchScaleFor(idx,pulse){
   if(!searchState.query)return 1;
   if(!searchState.matchSet.has(idx))return 0.32;
@@ -1117,6 +1158,9 @@ function updateSearchUI(){
   const deck=document.getElementById('searchDeck'),count=document.getElementById('searchCount'),input=document.getElementById('searchInput'),selected=document.getElementById('searchSelected');
   if(deck)deck.classList.toggle('open',searchState.open||Boolean(searchState.query));
   if(input&&document.activeElement!==input)input.value=searchState.query;
+  const clusterBtn=document.getElementById('clusterSearchBtn'),returnBtn=document.getElementById('returnUniverseBtn');
+  if(clusterBtn)clusterBtn.disabled=!searchState.query||!searchState.matches.length;
+  if(returnBtn)returnBtn.style.display=searchState.clusterActive?'inline-flex':'none';
   if(selected)selected.textContent='';
   if(typeof updateSearchRadar==='function')updateSearchRadar();
   if(!count)return;
@@ -1149,8 +1193,8 @@ function computeSearchMatches(){
   searchState.activeIndex=searchState.matches.length?0:-1;
   applySearchlight();updateSearchUI();
 }
-function updateSearchQuery(q){searchState.query=String(q||'').trim();computeSearchMatches();}
-function clearSearch(){searchState.query='';const input=document.getElementById('searchInput');if(input)input.value='';computeSearchMatches();showToast('Searchlight cleared');}
+function updateSearchQuery(q){if(searchState.clusterActive)restoreSearchGalaxyPreview(true);searchState.query=String(q||'').trim();computeSearchMatches();}
+function clearSearch(){if(searchState.clusterActive)restoreSearchGalaxyPreview(true);searchState.query='';const input=document.getElementById('searchInput');if(input)input.value='';computeSearchMatches();showToast('Searchlight cleared');}
 function currentSearchNode(){if(searchState.activeIndex<0)return null;return nodeData[searchState.matches[searchState.activeIndex]]||null;}
 function selectSearchResult(i,fly){
   if(!searchState.matches.length){showToast('No search results');return;}
@@ -1515,6 +1559,7 @@ function buildGameHTML(layout){
     ".searchDeck{display:flex;flex-direction:column;gap:5px;padding:6px;border:1px solid rgba(0,255,136,0.22);border-radius:12px;background:linear-gradient(180deg,rgba(0,24,16,0.72),rgba(0,5,12,0.72));box-shadow:0 0 18px rgba(0,255,136,0.10) inset;}",
     ".searchTop{display:flex;gap:6px;align-items:center;}",
     ".searchIcon,.searchClear,.searchBtn{background:rgba(0,255,136,0.10);color:#9fdbb9;border:1px solid rgba(0,255,136,0.34);font-family:monospace;font-weight:bold;border-radius:10px;min-height:40px;padding:0 10px;touch-action:manipulation;}",
+    ".searchBtn:disabled{opacity:.35;cursor:not-allowed;}",
     ".searchIcon{min-width:44px;font-size:16px;}",
     ".searchInput{flex:1;min-width:0;background:rgba(0,0,0,0.55);color:#dff;border:1px solid rgba(0,255,255,0.24);border-radius:10px;min-height:40px;padding:0 10px;font-family:monospace;font-size:13px;outline:none;}",
     ".searchInput:focus{border-color:#00ff88;box-shadow:0 0 12px rgba(0,255,136,0.18);}",
@@ -1606,6 +1651,8 @@ function buildGameHTML(layout){
     "      <button type='button' class='searchBtn' onclick='prevSearchResult()'>Prev</button>",
     "      <button type='button' class='searchBtn' onclick='nextSearchResult()'>Next</button>",
     "      <button type='button' class='searchBtn' onclick='flyToSearchResult()'>Fly</button>",
+    "      <button type='button' id='clusterSearchBtn' class='searchBtn' onclick='clusterSearchResults()'>Cluster Results</button>",
+    "      <button type='button' id='returnUniverseBtn' class='searchBtn' onclick='returnToUniverse()' style='display:none'>Return to Universe</button>",
     "    </div>",
     "    <div id='searchSelected'></div>",
     "  </div>",
