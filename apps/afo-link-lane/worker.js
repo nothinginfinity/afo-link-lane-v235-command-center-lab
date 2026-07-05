@@ -1758,7 +1758,7 @@ function buildGameHTML(layout){
     ".beamBtn:not(:disabled){border-color:#ffeeaa;color:#fff;background:rgba(255,190,80,0.16);box-shadow:0 0 10px rgba(255,190,80,0.22);}",
     ".beamBtn.active{border-color:#fff;background:rgba(255,220,120,0.24);}",    ".restoreQuickBtn{display:none;min-width:78px;font-size:12px;padding:0 10px;letter-spacing:.03em;border-color:rgba(255,210,0,.48);color:#ffdd55;background:rgba(255,210,0,.10);}",
     ".restoreQuickBtn:active{background:rgba(255,210,0,.24);color:#fff;}",
-    "#dockStatus{display:none;color:#ffdd88;font-size:11px;letter-spacing:.04em;text-transform:uppercase;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:14px;}"
+    "#dockStatus{display:none;color:#ffdd88;font-size:11px;letter-spacing:.04em;text-transform:uppercase;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:14px;}",
     ".beamBtn:disabled{opacity:.42;}",
     ".searchInput{flex:1;min-width:0;background:rgba(0,0,0,0.55);color:#dff;border:1px solid rgba(0,255,255,0.24);border-radius:10px;min-height:40px;padding:0 10px;font-family:monospace;font-size:13px;outline:none;}",
     ".searchInput:focus{border-color:#00ff88;box-shadow:0 0 12px rgba(0,255,136,0.18);}",
