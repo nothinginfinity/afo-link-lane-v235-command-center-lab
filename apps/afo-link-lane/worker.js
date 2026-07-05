@@ -1,4 +1,4 @@
-const VERSION = "2.3.18.6-focus-card-carousel";
+const VERSION = "2.3.18.7-focus-carousel-nav";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -1440,7 +1440,7 @@ function renderFocusCarousel(){
   const label=document.getElementById('fcCardLabel'),body=document.getElementById('fcBody'),dots=document.getElementById('fcDots'),title=document.getElementById('fcMiniTitle');
   if(label)label.textContent=(card&&card.label)||'CARD';
   if(body)body.innerHTML='<section class="fcPanel">'+((card&&card.html)||'')+'</section>';
-  if(dots)dots.innerHTML=cards.map(function(c,i){return '<button type="button" class="fcDot '+(i===idx?'active':'')+'" onclick="focusCarouselGo('+i+')" aria-label="Show '+cvEscape(c.label)+'"></button>';}).join('');
+  if(dots)dots.innerHTML=cards.map(function(c,i){return '<button type="button" class="fcDot '+(i===idx?'active':'')+'" data-fc-go="'+i+'" aria-label="Show '+cvEscape(c.label)+'"></button>';}).join('');
   if(title&&focusCarousel.node)title.textContent=focusCarousel.node.title||focusCarousel.node.url||'';
 }
 function openFocusCarousel(p){
