@@ -1,4 +1,4 @@
-const VERSION = "2.3.18.8-dock-restore-session-polish";
+const VERSION = "2.3.18.9-beam-focus-isolation";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -1024,8 +1024,10 @@ function maybeLoadLabelsFor(mesh,dist,force){if(!mesh||mesh.userData.labelsLoade
   L.push("  camera.getWorldDirection(_fwd);");
   L.push("  let bestMesh=null,bestMeshScore=Infinity,bestIdx=-1,bestScore=Infinity,bestDist=0;");
   L.push("  const aimRadius=aimState.magnet?0.24:0.16;");
+  L.push("  const beamFocus=aimState.tractorActive;");
   L.push("  for(let i=0;i<nodeData.length;i++){");
   L.push("    const p=nodeData[i];if(!p)continue;");
+  L.push("    if(beamFocus&&!aimState.selected.has(i))continue;");
   L.push("    nodePosition(p,_aimWorld);");
   L.push("    _toMesh.copy(_aimWorld).sub(camera.position);");
   L.push("    const dist=_toMesh.length();if(dist<1)continue;");
@@ -1040,6 +1042,8 @@ function maybeLoadLabelsFor(mesh,dist,force){if(!mesh||mesh.userData.labelsLoade
   L.push("  }");
   L.push("  for(let i=0;i<planetMeshes.length;i++){");
   L.push("    const mesh=planetMeshes[i];");
+  L.push("    const meshIdx=mesh&&mesh.userData&&typeof mesh.userData.globalIdx==='number'?mesh.userData.globalIdx:-1;");
+  L.push("    if(beamFocus&&!aimState.selected.has(meshIdx))continue;");
   L.push("    _toMesh.copy(mesh.position).sub(camera.position);");
   L.push("    const dist=_toMesh.length();");
   L.push("    if(dist>1400||dist<1) continue;");
@@ -1086,7 +1090,7 @@ function updateAimUI(){
   if(restoreQuick){restoreQuick.style.display=aimState.tractorActive?'inline-flex':'none';restoreQuick.title='Restore docked links to universe';}
   if(tractorBtn){tractorBtn.disabled=n<1;tractorBtn.textContent=aimState.tractorActive?('Re-Tractor '+n):('Tractor '+n);}
   if(restoreBtn)restoreBtn.style.display=aimState.tractorActive?'inline-flex':'none';
-  if(dockStatus){dockStatus.style.display=n?'block':'none';dockStatus.textContent=n?(n+' locked · '+(aimState.tractorActive?'docked':'ready to Beam')+' · session only'):'';}
+  if(dockStatus){dockStatus.style.display=n?'block':'none';dockStatus.textContent=n?(aimState.tractorActive?('Beam Focus · '+n+' docked · tap a card to unfold'):(n+' locked · ready to Beam · session only')):'';}
 }
 function toggleMagnetMode(){aimState.magnet=!aimState.magnet;updateAimUI();updateHUD();showToast(aimState.magnet?'🧲 Aim lock on: aim and tap links':'🧲 Aim lock off');}
 function toggleAimLock(){
@@ -1140,13 +1144,13 @@ function tractorBeamSelected(){
   });
   aimState.tractorActive=true;aimState.tractorOriginals=originals;aimState.tractorCount=Object.keys(originals).length;
   aimState.magnet=false;
-  applySearchlight();updateAimUI();updateHUD();showToast('Beam dock ready: tap a card to unfold');
+  applySearchlight();updateAimUI();updateHUD();showToast('Beam Focus ready: tap a docked card to unfold');
 }
 function selectWaypointResult(matchPos){selectSearchResult(matchPos,true);}
 function updateSearchRadar(){
   const layer=document.getElementById('waypointLayer'),ring=document.getElementById('radarRing');
   if(!layer)return;
-  const enabled=gameState==='flying'&&Boolean(searchState.query)&&searchState.matches.length>0;
+  const enabled=gameState==='flying'&&Boolean(searchState.query)&&searchState.matches.length>0&&!aimState.tractorActive;
   if(ring)ring.style.display=enabled?'block':'none';
   if(!enabled){if(layer.innerHTML)layer.innerHTML='';return;}
   const width=layer.clientWidth||layer.offsetWidth||480,height=layer.clientHeight||layer.offsetHeight||320;
@@ -1191,7 +1195,7 @@ function setNodeVisualPosition(p,x,y,z){
   p.x=x;p.y=y;p.z=z;
   if(p.mesh)p.mesh.position.set(x,y,z);
   if(farMesh&&p.farSlot>=0){
-    const s=searchState.query?searchScaleFor(p.globalIdx,false):1;
+    const s=(searchState.query||aimState.tractorActive)?searchScaleFor(p.globalIdx,false):1;
     _searchPos.set(x,y,z);_searchScale.set(s,s,s);_searchM4.compose(_searchPos,_searchQuat,_searchScale);farMesh.setMatrixAt(p.farSlot,_searchM4);farMesh.instanceMatrix.needsUpdate=true;
   }
 }
@@ -1220,8 +1224,10 @@ function clusterSearchResults(){
 }
 function searchScaleFor(idx,pulse){
   const locked=aimState&&aimState.selected&&aimState.selected.has(idx);
+  const beamFocus=aimState&&aimState.tractorActive;
   const hovered=aimState&&aimState.hoverIdx===idx;
   if(locked)return pulse?1.75+Math.sin(performance.now()*0.009)*0.12:1.78;
+  if(beamFocus)return 0.08;
   if(hovered)return pulse?1.55+Math.sin(performance.now()*0.01)*0.08:1.58;
   if(!searchState.query)return 1;
   if(!searchState.matchSet.has(idx))return 0.32;
