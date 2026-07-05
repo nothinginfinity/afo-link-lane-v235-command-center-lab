@@ -1443,8 +1443,25 @@ function renderFocusCarousel(){
   if(dots)dots.innerHTML=cards.map(function(c,i){return '<button type="button" class="fcDot '+(i===idx?'active':'')+'" data-fc-go="'+i+'" aria-label="Show '+cvEscape(c.label)+'"></button>';}).join('');
   if(title&&focusCarousel.node)title.textContent=focusCarousel.node.title||focusCarousel.node.url||'';
 }
+function bindFocusCarouselUI(){
+  const el=document.getElementById('focusCarousel');if(!el||el._bound)return;el._bound=true;
+  const by=function(id){return document.getElementById(id);};
+  const bind=function(id,fn){const b=by(id);if(!b)return;b.addEventListener('pointerup',function(e){e.preventDefault();e.stopPropagation();fn();});};
+  bind('fcBack',function(){closeFocusCarousel();});
+  bind('fcPrev',focusCarouselPrev);
+  bind('fcNext',focusCarouselNext);
+  bind('fcVisit',focusCarouselVisit);
+  bind('fcSave',function(){focusCarouselMark('save');});
+  bind('fcLater',function(){focusCarouselMark('later');});
+  const dots=by('fcDots');
+  if(dots)dots.addEventListener('pointerup',function(e){let t=e.target;while(t&&t!==dots&&!t.dataset.fcGo)t=t.parentElement;if(!t||!t.dataset.fcGo)return;e.preventDefault();e.stopPropagation();focusCarouselGo(Number(t.dataset.fcGo)||0);});
+  let sx=0,sy=0,st=0;
+  el.addEventListener('touchstart',function(e){if(!focusCarousel.open||!e.touches||!e.touches.length)return;const t=e.touches[0];sx=t.clientX;sy=t.clientY;st=Date.now();},{passive:true});
+  el.addEventListener('touchend',function(e){if(!focusCarousel.open||!e.changedTouches||!e.changedTouches.length)return;const t=e.changedTouches[0],dx=t.clientX-sx,dy=t.clientY-sy;if(Math.abs(dx)>46&&Math.abs(dx)>Math.abs(dy)*1.2&&Date.now()-st<900){e.preventDefault();e.stopPropagation();if(dx<0)focusCarouselNext();else focusCarouselPrev();}},{passive:false});
+}
 function openFocusCarousel(p){
   const el=document.getElementById('focusCarousel');if(!el||!p)return;
+  bindFocusCarouselUI();
   focusCarousel.node=p;focusCarousel.cards=focusCardsFor(p);focusCarousel.index=0;focusCarousel.open=true;
   el.classList.add('open');el.setAttribute('aria-hidden','false');renderFocusCarousel();
 }
