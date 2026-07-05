@@ -1,4 +1,4 @@
-const VERSION = "2.3.18.7-focus-carousel-nav";
+const VERSION = "2.3.18.8-dock-restore-session-polish";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -1079,12 +1079,14 @@ function plainAimLabel(p,max){
   const n=max||80;return raw.length>n?raw.slice(0,n-1)+'…':raw;
 }
 function updateAimUI(){
-  const btn=document.getElementById('magnetBtn'),beamBtn=document.getElementById('tractorQuickBtn'),tractorBtn=document.getElementById('tractorBtn'),restoreBtn=document.getElementById('restoreTractorBtn');
+  const btn=document.getElementById('magnetBtn'),beamBtn=document.getElementById('tractorQuickBtn'),restoreQuick=document.getElementById('restoreQuickBtn'),tractorBtn=document.getElementById('tractorBtn'),restoreBtn=document.getElementById('restoreTractorBtn'),dockStatus=document.getElementById('dockStatus');
   const n=aimState.selected.size;
   if(btn){btn.classList.toggle('active',aimState.magnet);btn.classList.toggle('hasLocks',n>0);btn.textContent=n?('🧲 '+n):'🧲';btn.title=n?(n+' locked link'+(n===1?'':'s')):'Aim lock selector';}
   if(beamBtn){beamBtn.disabled=n<1;beamBtn.classList.toggle('active',aimState.tractorActive);beamBtn.textContent=aimState.tractorActive?'Re-Beam':'Beam';beamBtn.title=n?('Stage '+n+' locked link'+(n===1?'':'s')):'Lock links with the magnet first';}
+  if(restoreQuick){restoreQuick.style.display=aimState.tractorActive?'inline-flex':'none';restoreQuick.title='Restore docked links to universe';}
   if(tractorBtn){tractorBtn.disabled=n<1;tractorBtn.textContent=aimState.tractorActive?('Re-Tractor '+n):('Tractor '+n);}
   if(restoreBtn)restoreBtn.style.display=aimState.tractorActive?'inline-flex':'none';
+  if(dockStatus){dockStatus.style.display=n?'block':'none';dockStatus.textContent=n?(n+' locked · '+(aimState.tractorActive?'docked':'ready to Beam')+' · session only'):'';}
 }
 function toggleMagnetMode(){aimState.magnet=!aimState.magnet;updateAimUI();updateHUD();showToast(aimState.magnet?'🧲 Aim lock on: aim and tap links':'🧲 Aim lock off');}
 function toggleAimLock(){
@@ -1441,7 +1443,7 @@ function renderFocusCarousel(){
   if(label)label.textContent=(card&&card.label)||'CARD';
   if(body)body.innerHTML='<section class="fcPanel">'+((card&&card.html)||'')+'</section>';
   if(dots)dots.innerHTML=cards.map(function(c,i){return '<button type="button" class="fcDot '+(i===idx?'active':'')+'" data-fc-go="'+i+'" aria-label="Show '+cvEscape(c.label)+'"></button>';}).join('');
-  if(title&&focusCarousel.node)title.textContent=focusCarousel.node.title||focusCarousel.node.url||'';
+  if(title&&focusCarousel.node){const base=focusCarousel.node.title||focusCarousel.node.url||'';const dock=aimState.tractorActive?(' · dock '+aimState.tractorCount):'';title.textContent='Card '+(idx+1)+'/'+cards.length+dock+' · session only · '+base;}
 }
 function bindFocusCarouselUI(){
   const el=document.getElementById('focusCarousel');if(!el||el._bound)return;el._bound=true;
@@ -1754,7 +1756,9 @@ function buildGameHTML(layout){
     ".magnetBtn.hasLocks{color:#fff;border-color:#ffeeaa;}",
     ".beamBtn{min-width:66px;font-size:12px;padding:0 10px;letter-spacing:.04em;}",
     ".beamBtn:not(:disabled){border-color:#ffeeaa;color:#fff;background:rgba(255,190,80,0.16);box-shadow:0 0 10px rgba(255,190,80,0.22);}",
-    ".beamBtn.active{border-color:#fff;background:rgba(255,220,120,0.24);}",
+    ".beamBtn.active{border-color:#fff;background:rgba(255,220,120,0.24);}",    ".restoreQuickBtn{display:none;min-width:78px;font-size:12px;padding:0 10px;letter-spacing:.03em;border-color:rgba(255,210,0,.48);color:#ffdd55;background:rgba(255,210,0,.10);}",
+    ".restoreQuickBtn:active{background:rgba(255,210,0,.24);color:#fff;}",
+    "#dockStatus{display:none;color:#ffdd88;font-size:11px;letter-spacing:.04em;text-transform:uppercase;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:14px;}"
     ".beamBtn:disabled{opacity:.42;}",
     ".searchInput{flex:1;min-width:0;background:rgba(0,0,0,0.55);color:#dff;border:1px solid rgba(0,255,255,0.24);border-radius:10px;min-height:40px;padding:0 10px;font-family:monospace;font-size:13px;outline:none;}",
     ".searchInput:focus{border-color:#00ff88;box-shadow:0 0 12px rgba(0,255,136,0.18);}",
@@ -1864,7 +1868,8 @@ function buildGameHTML(layout){
     "      <button type='button' id='searchToggle' class='searchIcon' onclick='toggleSearchDeck()'>⌕</button>",
     "      <button type='button' id='magnetBtn' class='searchIcon magnetBtn' onclick='return searchButtonAction(event,toggleMagnetMode)' title='Aim lock selector'>🧲</button>",
     "      <button type='button' id='tractorQuickBtn' class='searchIcon beamBtn' onclick='return searchButtonAction(event,tractorBeamSelected)' disabled title='Beam locked links'>Beam</button>",
-    "      <input id='searchInput' class='searchInput' type='search' inputmode='search' placeholder='Search AI, WebAssembly, arXiv...' oninput='updateSearchQuery(this.value)' onfocus='toggleSearchDeck(true)'>",
+    "      <button type='button' id='restoreQuickBtn' class='searchIcon restoreQuickBtn' onclick='return searchButtonAction(event,restoreTractorBeam)' style='display:none' title='Restore docked links'>Restore</button>",
+    "      <input id='searchInput' class='searchInput' type='search' inputmode='search' placeholder='Search AI, WebAssembly, arXiv...' oninput='updateSearchQuery(this.value)' onfocus='toggleSearchDeck(true)'>"
     "      <button type='button' class='searchClear' onclick='clearSearch()'>×</button>",
     "    </div>",
     "    <div class='searchControls'>",
@@ -1904,7 +1909,7 @@ function buildGameHTML(layout){
     "  <div id='fcTop'><button type='button' id='fcBack'>\\u2190 Back</button><div id='fcCardLabel'>TITLE</div><div id='fcDots'></div></div>",
     "  <div id='fcMiniTitle'></div>",
     "  <main id='fcBody'></main>",
-    "  <div id='fcActions'><button type='button' id='fcSave' class='fcAction'>💾 Save</button><button type='button' id='fcLater' class='fcAction later'>🕘 Later</button></div>",
+    "  <div id='fcActions'><button type='button' id='fcSave' class='fcAction'>💾 Save session</button><button type='button' id='fcLater' class='fcAction later'>🕘 Later session</button></div>"}]}
     "  <div id='fcNav'><button type='button' id='fcPrev' class='fcNavBtn'>‹</button><button type='button' id='fcVisit'>Visit \\u2192</button><button type='button' id='fcNext' class='fcNavBtn'>›</button></div>",
     "</div>",
     "<div id='ov'>",
