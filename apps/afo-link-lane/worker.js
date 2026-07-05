@@ -1869,9 +1869,10 @@ function buildGameHTML(layout){
     "      <button type='button' id='magnetBtn' class='searchIcon magnetBtn' onclick='return searchButtonAction(event,toggleMagnetMode)' title='Aim lock selector'>🧲</button>",
     "      <button type='button' id='tractorQuickBtn' class='searchIcon beamBtn' onclick='return searchButtonAction(event,tractorBeamSelected)' disabled title='Beam locked links'>Beam</button>",
     "      <button type='button' id='restoreQuickBtn' class='searchIcon restoreQuickBtn' onclick='return searchButtonAction(event,restoreTractorBeam)' style='display:none' title='Restore docked links'>Restore</button>",
-    "      <input id='searchInput' class='searchInput' type='search' inputmode='search' placeholder='Search AI, WebAssembly, arXiv...' oninput='updateSearchQuery(this.value)' onfocus='toggleSearchDeck(true)'>"
+    "      <input id='searchInput' class='searchInput' type='search' inputmode='search' placeholder='Search AI, WebAssembly, arXiv...' oninput='updateSearchQuery(this.value)' onfocus='toggleSearchDeck(true)'>",
     "      <button type='button' class='searchClear' onclick='clearSearch()'>×</button>",
     "    </div>",
+    "    <div id='dockStatus'></div>",
     "    <div class='searchControls'>",
     "      <span id='searchCount'>Searchlight ready</span>",
     "      <button type='button' class='searchBtn' onclick='return searchButtonAction(event,prevSearchResult)'>Prev</button>",
@@ -1909,7 +1910,7 @@ function buildGameHTML(layout){
     "  <div id='fcTop'><button type='button' id='fcBack'>\\u2190 Back</button><div id='fcCardLabel'>TITLE</div><div id='fcDots'></div></div>",
     "  <div id='fcMiniTitle'></div>",
     "  <main id='fcBody'></main>",
-    "  <div id='fcActions'><button type='button' id='fcSave' class='fcAction'>💾 Save session</button><button type='button' id='fcLater' class='fcAction later'>🕘 Later session</button></div>"}]}
+    "  <div id='fcActions'><button type='button' id='fcSave' class='fcAction'>💾 Save session</button><button type='button' id='fcLater' class='fcAction later'>🕘 Later session</button></div>",
     "  <div id='fcNav'><button type='button' id='fcPrev' class='fcNavBtn'>‹</button><button type='button' id='fcVisit'>Visit \\u2192</button><button type='button' id='fcNext' class='fcNavBtn'>›</button></div>",
     "</div>",
     "<div id='ov'>",
