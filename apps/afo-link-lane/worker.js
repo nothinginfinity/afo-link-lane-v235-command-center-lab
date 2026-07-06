@@ -1223,8 +1223,28 @@ function dockTrayLayout(count){
   const cols=galaxy&&count>=18?6:Math.ceil(Math.sqrt(count));
   const rows=Math.ceil(count/cols);
   const spacing=galaxy?Math.max(66,Math.min(94,520/Math.max(3,cols))):Math.max(84,Math.min(128,380/Math.max(2,cols)));
-  const baseDist=galaxy?Math.max(360,Math.min(500,320+rows*30)):330;
-  return {cols:cols,rows:rows,spacing:spacing,dist:baseDist,baseDist:baseDist};
+  const baseDist=galaxy?Math.max(390,Math.min(560,340+rows*28)):330;
+  const radius=galaxy?Math.max(118,Math.min(245,spacing*Math.max(1.6,Math.sqrt(Math.max(1,count))*0.62))):spacing;
+  return {cols:cols,rows:rows,spacing:spacing,dist:baseDist,baseDist:baseDist,radius:radius};
+}
+function galaxyShapeOffset(i,count,layout,zoom){
+  const shape=galaxyShapeName(),n=Math.max(1,count),r=layout.radius*zoom;
+  if(shape==='cube'){
+    const per=Math.max(1,Math.ceil(n/6)),face=Math.floor(i/per)%6,local=i%per,side=Math.max(1,Math.ceil(Math.sqrt(per)));
+    const col=local%side,row=Math.floor(local/side),den=Math.max(1,side-1);
+    const u=(col/den-.5)*2*r,v=(row/den-.5)*2*r;
+    if(face===0)return{x:r,y:u,z:v};if(face===1)return{x:-r,y:u,z:v};if(face===2)return{x:u,y:r,z:v};if(face===3)return{x:u,y:-r,z:v};if(face===4)return{x:u,y:v,z:r};return{x:u,y:v,z:-r};
+  }
+  if(shape==='spiral'){
+    const t=n===1?.5:i/(n-1),a=i*.92,rad=r*(.22+t*.88);
+    return{x:Math.cos(a)*rad,y:(.5-t)*r*1.8,z:Math.sin(a)*rad};
+  }
+  if(shape==='torus'){
+    const a=i/n*Math.PI*2,b=((i*7)%n)/n*Math.PI*2,major=r*.92,minor=r*.38;
+    return{x:(major+minor*Math.cos(b))*Math.cos(a),y:minor*Math.sin(b),z:(major+minor*Math.cos(b))*Math.sin(a)};
+  }
+  const phi=(1+Math.sqrt(5))/2,y=1-(i+.5)*2/n,rr=Math.sqrt(Math.max(0,1-y*y)),theta=i*Math.PI*2/phi;
+  return{x:Math.cos(theta)*rr*r,y:y*r,z:Math.sin(theta)*rr*r};
 }
 function updateDockedTray(force){
   if(!aimState.tractorActive)return;
@@ -1246,10 +1266,9 @@ function updateDockedTray(force){
   picks.forEach(function(idx,i){
     const p=nodeData[idx];if(!p)return;
     if(!p.promoted&&planetMeshes.length<MAX_PROMOTED)promoteNode(idx);
-    const col=i%layout.cols,row=Math.floor(i/layout.cols);
-    let x=(col-(layout.cols-1)/2)*layout.spacing*zoom;
-    let y=((layout.rows-1)/2-row)*layout.spacing*zoom;
-    let z=0;
+    let x=0,y=0,z=0;
+    if(galaxy){const off=galaxyShapeOffset(i,count,layout,zoom);x=off.x;y=off.y;z=off.z;}
+    else{const col=i%layout.cols,row=Math.floor(i/layout.cols);x=(col-(layout.cols-1)/2)*layout.spacing;y=((layout.rows-1)/2-row)*layout.spacing;}
     if(galaxy){
       const x1=x*cy+z*sy,z1=-x*sy+z*cy;
       const y1=y*cp-z1*sp,z2=y*sp+z1*cp;
@@ -1260,7 +1279,7 @@ function updateDockedTray(force){
     if(p.mesh){orientDockedNode(p);maybeLoadLabelsFor(p.mesh,0,true);p.mesh.scale.setScalar(searchScaleFor(idx,false)*(galaxy?zoom:1));}
   });
 }
-function tractorBeamSelected(opts){
+function tractorBeamSelected(opts){"type":"replace_exact
   const picks=selectedAimIndices();
   if(!picks.length){showToast('Lock links with 🧲 first');return;}
   if(aimState.tractorActive)restoreTractorBeam(true);
