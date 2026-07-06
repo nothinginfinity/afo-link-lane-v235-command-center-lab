@@ -1,4 +1,4 @@
-const VERSION = "2.3.18.10.1-galaxy-focus-visible-control";
+const VERSION = "2.3.18.11.1-centered-galaxy-tray";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -1019,7 +1019,7 @@ function maybeLoadLabelsFor(mesh,dist,force){if(!mesh||mesh.userData.labelsLoade
   L.push("}");
 
   L.push("const _toMesh=new THREE.Vector3(),_fwd=new THREE.Vector3(),_aimWorld=new THREE.Vector3(),_aimNdc=new THREE.Vector3();");
-  L.push("const aimState={magnet:false,hoverIdx:-1,hoverDist:0,selected:new Set(),tractorActive:false,tractorOriginals:null,tractorCount:0};");
+  L.push("const aimState={magnet:false,hoverIdx:-1,hoverDist:0,selected:new Set(),tractorActive:false,tractorOriginals:null,tractorCount:0,tractorFocusMode:'beam',tractorFocusKey:null,tractorLayout:null};");
   L.push("function updateTarget(){");
   L.push("  camera.getWorldDirection(_fwd);");
   L.push("  let bestMesh=null,bestMeshScore=Infinity,bestIdx=-1,bestScore=Infinity,bestDist=0;");
@@ -1091,7 +1091,7 @@ function updateAimUI(){
   if(restoreQuick){restoreQuick.style.display=aimState.tractorActive?'inline-flex':'none';restoreQuick.title='Restore docked links to universe';}
   if(tractorBtn){tractorBtn.disabled=n<1;tractorBtn.textContent=aimState.tractorActive?('Re-Tractor '+n):('Tractor '+n);}
   if(restoreBtn)restoreBtn.style.display=aimState.tractorActive?'inline-flex':'none';
-  if(dockStatus){dockStatus.style.display=n?'block':'none';dockStatus.textContent=n?(aimState.tractorActive?('Beam Focus · '+n+' docked · tap a card to unfold'):(n+' locked · ready to Beam · session only')):'';}
+  if(dockStatus){dockStatus.style.display=n?'block':'none';dockStatus.textContent=n?(aimState.tractorActive?((aimState.tractorFocusMode==='galaxy'?'Galaxy Tray':'Beam Focus')+' · '+n+' docked · tap a card to unfold'):(n+' locked · ready to Beam · session only')):'';}
 }
 function toggleMagnetMode(){aimState.magnet=!aimState.magnet;updateAimUI();updateHUD();showToast(aimState.magnet?'🧲 Aim lock on: aim and tap links':'🧲 Aim lock off');}
 function toggleAimLock(){
@@ -1137,8 +1137,7 @@ function focusCurrentGalaxy(){
   if(searchState.clusterActive)restoreSearchGalaxyPreview(true);
   if(aimState.tractorActive)restoreTractorBeam(true);
   aimState.selected.clear();picks.forEach(function(idx){aimState.selected.add(idx);});
-  tractorBeamSelected();
-  showToast('Galaxy Focus: '+key+' - '+picks.length+' link batch');
+  tractorBeamSelected({mode:'galaxy',galaxyKey:key});
 }
 function orientDockedNode(p){
   if(!p||!p.mesh)return;
@@ -1155,33 +1154,55 @@ function restoreTractorBeam(silent){
   if(!aimState.tractorActive&&!aimState.tractorOriginals){if(!silent)showToast('No tractor staging to restore');return;}
   const originals=aimState.tractorOriginals||{};
   Object.keys(originals).forEach(function(k){const p=nodeData[Number(k)],o=originals[k];if(p&&o){setNodeVisualPosition(p,o.x,o.y,o.z);if(p.mesh){if(o.q)p.mesh.quaternion.set(o.q.x,o.q.y,o.q.z,o.q.w);p.mesh.userData.beamDocked=false;}}});
-  aimState.tractorActive=false;aimState.tractorOriginals=null;aimState.tractorCount=0;
+  aimState.tractorActive=false;aimState.tractorOriginals=null;aimState.tractorCount=0;aimState.tractorFocusMode='beam';aimState.tractorFocusKey=null;aimState.tractorLayout=null;
   applySearchlight();updateAimUI();updateHUD();
   if(!silent)showToast('Restored locked links to universe');
 }
-function tractorBeamSelected(){
+function dockTrayLayout(count){
+  const galaxy=aimState.tractorFocusMode==='galaxy';
+  const cols=galaxy&&count>=18?6:Math.ceil(Math.sqrt(count));
+  const rows=Math.ceil(count/cols);
+  const spacing=galaxy?Math.max(66,Math.min(94,520/Math.max(3,cols))):Math.max(84,Math.min(128,380/Math.max(2,cols)));
+  const dist=galaxy?Math.max(330,Math.min(460,290+rows*28)):330;
+  return {cols:cols,rows:rows,spacing:spacing,dist:dist};
+}
+function updateDockedTray(){
+  if(!aimState.tractorActive)return;
   const picks=selectedAimIndices();
-  if(!picks.length){showToast('Lock links with 🧲 first');return;}
-  if(aimState.tractorActive)restoreTractorBeam(true);
-  const originals={},count=picks.length;
+  if(!picks.length)return;
+  const count=picks.length,layout=dockTrayLayout(count);
+  aimState.tractorLayout=layout;
   camera.updateMatrixWorld();
   const forward=new THREE.Vector3();camera.getWorldDirection(forward);
   const right=new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion);
   const up=new THREE.Vector3(0,1,0).applyQuaternion(camera.quaternion);
-  const center=camera.position.clone().add(forward.clone().multiplyScalar(330));
-  const cols=Math.ceil(Math.sqrt(count)),rows=Math.ceil(count/cols),spacing=Math.max(84,Math.min(128,380/Math.max(2,cols)));
+  const center=camera.position.clone().add(forward.clone().multiplyScalar(layout.dist));
   picks.forEach(function(idx,i){
     const p=nodeData[idx];if(!p)return;
     if(!p.promoted&&planetMeshes.length<MAX_PROMOTED)promoteNode(idx);
-    originals[idx]={x:p.x,y:p.y,z:p.z,q:p.mesh?{x:p.mesh.quaternion.x,y:p.mesh.quaternion.y,z:p.mesh.quaternion.z,w:p.mesh.quaternion.w}:null};
-    const col=i%cols,row=Math.floor(i/cols);
-    const pos=center.clone().add(right.clone().multiplyScalar((col-(cols-1)/2)*spacing)).add(up.clone().multiplyScalar(((rows-1)/2-row)*spacing));
+    const col=i%layout.cols,row=Math.floor(i/layout.cols);
+    const pos=center.clone().add(right.clone().multiplyScalar((col-(layout.cols-1)/2)*layout.spacing)).add(up.clone().multiplyScalar(((layout.rows-1)/2-row)*layout.spacing));
     setNodeVisualPosition(p,pos.x,pos.y,pos.z);
-    if(p.mesh){orientDockedNode(p);loadTierFor(p.mesh,'thumb');maybeLoadLabelsFor(p.mesh,0,true);p.mesh.scale.setScalar(searchScaleFor(idx,false));}
+    if(p.mesh){orientDockedNode(p);maybeLoadLabelsFor(p.mesh,0,true);p.mesh.scale.setScalar(searchScaleFor(idx,false));}
   });
-  aimState.tractorActive=true;aimState.tractorOriginals=originals;aimState.tractorCount=Object.keys(originals).length;
-  aimState.magnet=false;
-  applySearchlight();updateAimUI();updateHUD();showToast('Beam Focus ready: tap a docked card to unfold');
+}
+function tractorBeamSelected(opts){
+  const picks=selectedAimIndices();
+  if(!picks.length){showToast('Lock links with 🧲 first');return;}
+  if(aimState.tractorActive)restoreTractorBeam(true);
+  const mode=opts&&opts.mode==='galaxy'?'galaxy':'beam';
+  const key=opts&&opts.galaxyKey?String(opts.galaxyKey):null;
+  const originals={};
+  picks.forEach(function(idx){
+    const p=nodeData[idx];if(!p)return;
+    if(!p.promoted&&planetMeshes.length<MAX_PROMOTED)promoteNode(idx);
+    originals[idx]={x:p.x,y:p.y,z:p.z,q:p.mesh?{x:p.mesh.quaternion.x,y:p.mesh.quaternion.y,z:p.mesh.quaternion.z,w:p.mesh.quaternion.w}:null};
+    if(p.mesh){loadTierFor(p.mesh,'thumb');maybeLoadLabelsFor(p.mesh,0,true);}
+  });
+  aimState.tractorActive=true;aimState.tractorOriginals=originals;aimState.tractorCount=Object.keys(originals).length;aimState.tractorFocusMode=mode;aimState.tractorFocusKey=key;aimState.tractorLayout=null;
+  aimState.magnet=false;speed=0;syncNavSpeed();clearNavHeld();
+  updateDockedTray();
+  applySearchlight();updateAimUI();updateHUD();showToast(mode==='galaxy'?('Galaxy Tray centered: '+(key||'galaxy')+' · '+aimState.tractorCount+' links'):'Beam Focus ready: tap a docked card to unfold');
 }
 function selectWaypointResult(matchPos){selectSearchResult(matchPos,true);}
 function updateSearchRadar(){
@@ -1701,7 +1722,7 @@ function bindFlightHud(){
   L.push("function update(){");
   L.push("  if(gameState!=='flying') return;");
   L.push("  frame++;");
-  L.push("  if(updateSearchFlight()){updateLOD();billboardCubes();if(frame%4===0){updateHUD();pulseSearchlight();}return;}");
+  L.push("  if(updateSearchFlight()){updateDockedTray();updateLOD();billboardCubes();if(frame%4===0){updateHUD();pulseSearchlight();}return;}");
   L.push("  applyNavHold();");
   L.push("  yaw+=yawVel+navState.yaw;navState.yaw=0;pitch=Math.max(-PITCH_LIMIT,Math.min(PITCH_LIMIT,pitch+pitchVel));");
   L.push("  camera.quaternion.setFromEuler(new THREE.Euler(pitch,yaw,0,'YXZ'));");
@@ -1709,7 +1730,7 @@ function bindFlightHud(){
   L.push("  if(navState.orbit){orbitCamera(navState.orbit);navState.orbit=0;camera.quaternion.setFromEuler(new THREE.Euler(pitch,yaw,0,'YXZ'));}");
   L.push("  camera.translateZ(-speed);");
   L.push("  yawVel*=0.85;pitchVel*=0.85;");
-  L.push("  updateTarget();updateLOD();billboardCubes();");
+  L.push("  updateDockedTray();updateTarget();updateLOD();billboardCubes();");
   L.push("  if(targeted&&speed>0.3){");
   L.push("    const td=camera.position.distanceTo(targeted.position);");
   L.push("    if(td<220) speed*=0.965;");
