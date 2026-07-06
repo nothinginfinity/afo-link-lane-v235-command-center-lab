@@ -1236,7 +1236,7 @@ function galaxyShapeOffset(i,count,layout,zoom){
     if(face===0)return{x:r,y:u,z:v};if(face===1)return{x:-r,y:u,z:v};if(face===2)return{x:u,y:r,z:v};if(face===3)return{x:u,y:-r,z:v};if(face===4)return{x:u,y:v,z:r};return{x:u,y:v,z:-r};
   }
   if(shape==='spiral'){
-    const t=n===1?.5:i/(n-1),a=i*.92,rad=r*(.22+t*.88);
+    const t=(n===1)?0.5:i/(n-1),a=i*.92,rad=r*(.22+t*.88);
     return{x:Math.cos(a)*rad,y:(.5-t)*r*1.8,z:Math.sin(a)*rad};
   }
   if(shape==='torus'){
@@ -1717,8 +1717,8 @@ function nudgeNav(kind){
     if(kind==='speedUp'){setGalaxyZoomDelta(0.08);showToast('Galaxy zoom '+aimState.tractorZoom.toFixed(2)+'x');return;}
     if(kind==='speedDown'){setGalaxyZoomDelta(-0.08);showToast('Galaxy zoom '+aimState.tractorZoom.toFixed(2)+'x');return;}
     if(kind==='stop'){aimState.tractorOrbitYaw=0;aimState.tractorOrbitPitch=0;aimState.tractorZoom=1;speed=0;syncNavSpeed();clearNavHeld();updateDockedTray(true);updateTarget();showToast('Galaxy view reset');return;}
-    if(kind==='turnLeft'||kind==='orbitLeft'||kind==='panLeft'){setGalaxyOrbitDelta(18,0);return;}
-    if(kind==='turnRight'||kind==='orbitRight'||kind==='panRight'){setGalaxyOrbitDelta(-18,0);return;}
+    if(kind==='turnLeft'||kind==='orbitLeft'||kind==='panLeft'){cycleGalaxyShape(-1);return;}
+    if(kind==='turnRight'||kind==='orbitRight'||kind==='panRight'){cycleGalaxyShape(1);return;}
   }
   if(kind==='speedUp'){adjustSpeed(NAV_LIMITS.speedStep);return;}
   if(kind==='speedDown'){adjustSpeed(-NAV_LIMITS.speedStep);return;}
@@ -1808,14 +1808,14 @@ function bindFlightHud(){
       const prefix=focusActive?(focusName+' · '):(aimState.magnet?(aimLocked?'Locked · ':'Aim lock · '):'Preview · ');
       hint.style.display='block';hint.textContent=prefix+plainAimLabel(aimNode,54)+' · '+source+' · '+type+' · '+action;
     }
-    else if(focusActive){hint.style.display='block';hint.textContent=isGalaxyOrbitMode()?('Galaxy Orbit · '+aimState.selected.size+' docked · drag rotate · pinch/scroll zoom · tap select'):(focusName+' · '+aimState.selected.size+' docked · aim a card');}
+    else if(focusActive){hint.style.display='block';hint.textContent=isGalaxyOrbitMode()?('Galaxy '+prettyGalaxyShape()+' · '+aimState.selected.size+' docked · drag rotate · pinch zoom · tap any node'):(focusName+' · '+aimState.selected.size+' docked · aim a card');}
     else if(aimState.magnet){hint.style.display='block';hint.textContent='Aim lock · point at a link · tap to lock';}
     else{hint.style.display='none';}
   }
   const sl=document.getElementById('speedLabel');
   if(sl){sl.textContent=isGalaxyOrbitMode()?('🌍 ORBIT '+(aimState.tractorZoom||1).toFixed(2)+'x'):(speed===0?'\\u23F8 STOPPED':speed<0?'\\u25C0 REVERSE '+Math.abs(speed).toFixed(1)+'x':'\\uD83D\\uDE80 '+speed.toFixed(1)+'x');sl.style.color=isGalaxyOrbitMode()?'#9ee7ff':(speed<0?'#ffaa44':'#888');}
   const fs=document.getElementById('flightStatus');
-  if(fs){const mode=isGalaxyOrbitMode()?'galaxy orbit inspection':(speed===0?'cruise off':(speed>0?'cruise forward':'cruise reverse'));fs.textContent=isGalaxyOrbitMode()?('orbit: rotate / zoom / tap select · '+(aimState.tractorZoom||1).toFixed(2)+'x'):('speed: '+speed.toFixed(1)+'x / '+mode);}
+  if(fs){const mode=isGalaxyOrbitMode()?'galaxy orbit inspection':(speed===0?'cruise off':(speed>0?'cruise forward':'cruise reverse'));fs.textContent=isGalaxyOrbitMode()?('shape: '+prettyGalaxyShape()+' · tap any node · '+(aimState.tractorZoom||1).toFixed(2)+'x'):('speed: '+speed.toFixed(1)+'x / '+mode);}
   const arrow=document.getElementById('compass');
   if(clusterMode==='supercluster'){
     arrow.style.display='none'; document.getElementById('compassLabel').textContent='';
@@ -1843,7 +1843,7 @@ function bindFlightHud(){
   L.push("  frame++;");
   L.push("  if(updateSearchFlight()){updateDockedTray();updateLOD();billboardCubes();if(frame%4===0){updateHUD();pulseSearchlight();}return;}");
   L.push("  applyNavHold();");
-  L.push("  if(isGalaxyOrbitMode()){speed=0;syncNavSpeed();yawVel=0;pitchVel=0;navState.yaw=0;navState.orbit=0;navState.panX=0;navState.panY=0;updateDockedTray(true);updateTarget();updateLOD();billboardCubes();if(frame%4===0)updateHUD();return;}");
+  L.push("  if(isGalaxyOrbitMode()){speed=0;syncNavSpeed();yawVel=0;pitchVel=0;navState.yaw=0;navState.orbit=0;navState.panX=0;navState.panY=0;updateDockedTray(true);updateLOD();billboardCubes();if(frame%4===0){updateTarget();updateHUD();}return;}");
   L.push("  yaw+=yawVel+navState.yaw;navState.yaw=0;pitch=Math.max(-PITCH_LIMIT,Math.min(PITCH_LIMIT,pitch+pitchVel));");
   L.push("  camera.quaternion.setFromEuler(new THREE.Euler(pitch,yaw,0,'YXZ'));");
   L.push("  if(navState.panX||navState.panY){camera.translateX(navState.panX);camera.translateY(navState.panY);navState.panX=0;navState.panY=0;}");
