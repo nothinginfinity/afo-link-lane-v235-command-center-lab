@@ -1,0 +1,104 @@
+name: Deploy AFO Link Lane v235 Lab
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        description: Expected Worker VERSION value to deploy
+        required: true
+        default: 2.3.18.11.2.2-galaxy-focus-reticle-navigation-fix
+      confirm:
+        description: Type DEPLOY to confirm this manual lab deploy
+        required: true
+        default: DEPLOY
+
+permissions:
+  contents: read
+
+concurrency:
+  group: afo-link-lane-v235-lab-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Manual lab Worker deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      EXPECTED_VERSION: ${{ inputs.expected_version }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WORKER_CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+      WORKER_CF_BROWSER_RENDERING_API_TOKEN: ${{ secrets.CF_BROWSER_RENDERING_API_TOKEN }}
+      HEALTH_URL: https://afo-link-lane-v235-lab.jaredtechfit.workers.dev/health
+    steps:
+      - name: Check manual confirmation
+        shell: bash
+        run: |
+          if [ "${{ inputs.confirm }}" != "DEPLOY" ]; then
+            echo "Manual confirmation must be DEPLOY"
+            exit 1
+          fi
+
+      - name: Check required deploy secrets
+        shell: bash
+        run: |
+          if [ -z "${CLOUDFLARE_API_TOKEN}" ]; then
+            echo "Missing GitHub secret: CLOUDFLARE_API_TOKEN"
+            exit 1
+          fi
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID}" ]; then
+            echo "Missing GitHub secret: CLOUDFLARE_ACCOUNT_ID"
+            exit 1
+          fi
+
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Wrangler
+        working-directory: apps/afo-link-lane
+        shell: bash
+        run: npm install
+
+      - name: Syntax check Worker
+        working-directory: apps/afo-link-lane
+        shell: bash
+        run: node --check worker.js
+
+      - name: Assert Worker version
+        working-directory: apps/afo-link-lane
+        shell: bash
+        run: |
+          node -e "const fs=require('fs');const expected=process.env.EXPECTED_VERSION;const src=fs.readFileSync('worker.js','utf8');const match=src.match(/const VERSION\\s*=\\s*\"([^\"]+)\"/);if(!match)throw new Error('VERSION not found');console.log('Worker VERSION='+match[1]);if(match[1]!==expected)throw new Error('Expected '+expected+' but found '+match[1]);"
+
+      - name: Optionally refresh Worker secrets
+        working-directory: apps/afo-link-lane
+        shell: bash
+        run: |
+          if [ -n "${WORKER_CF_ACCOUNT_ID}" ]; then
+            printf '%s' "${WORKER_CF_ACCOUNT_ID}" | npx wrangler secret put CF_ACCOUNT_ID --config wrangler.jsonc
+          else
+            echo "Skipping CF_ACCOUNT_ID secret refresh"
+          fi
+          if [ -n "${WORKER_CF_BROWSER_RENDERING_API_TOKEN}" ]; then
+            printf '%s' "${WORKER_CF_BROWSER_RENDERING_API_TOKEN}" | npx wrangler secret put CF_BROWSER_RENDERING_API_TOKEN --config wrangler.jsonc
+          else
+            echo "Skipping CF_BROWSER_RENDERING_API_TOKEN secret refresh"
+          fi
+
+      - name: Deploy lab Worker
+        working-directory: apps/afo-link-lane
+        shell: bash
+        run: npx wrangler deploy --config wrangler.jsonc
+
+      - name: Verify live health version
+        shell: bash
+        run: |
+          HEALTH_JSON="$(curl -fsS "${HEALTH_URL}")"
+          echo "${HEALTH_JSON}"
+          HEALTH_JSON="${HEALTH_JSON}" node -e "const data=JSON.parse(process.env.HEALTH_JSON);const expected=process.env.EXPECTED_VERSION;if(!data.ok)throw new Error('Health check returned ok=false');if(data.worker!=='afo-link-lane-v235-lab')throw new Error('Unexpected worker '+data.worker);if(data.version!==expected)throw new Error('Expected live version '+expected+' but found '+data.version);console.log('Live version verified: '+data.version);"
