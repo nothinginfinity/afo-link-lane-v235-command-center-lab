@@ -1,4 +1,4 @@
-const VERSION = "2.3.18.11.4-galaxy-focus-orbit-navigation";
+const VERSION = "2.3.18.11.5-galaxy-focus-shapes-safe-select";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -811,6 +811,7 @@ function budgetedPixelRatio(){return RENDER_BUDGET.pixelRatio;}`);
 
   L.push("function applyFormation(name){");
   L.push("  if(!FORMATIONS[name]) return;");
+  L.push("  if(isGalaxyOrbitMode()){setGalaxyShape(name);return;}");
   L.push("  currentFormation=name;");
   L.push("  repositionAll();");
   L.push("  document.querySelectorAll('.fmtBtn').forEach(function(b){b.classList.toggle('active',b.dataset.f===name);});");
@@ -1027,7 +1028,7 @@ function maybeLoadLabelsFor(mesh,dist,force){if(!mesh||!mesh.userData)return;con
   L.push("}");
 
   L.push("const _toMesh=new THREE.Vector3(),_fwd=new THREE.Vector3(),_aimWorld=new THREE.Vector3(),_aimNdc=new THREE.Vector3();");
-  L.push("const aimState={magnet:false,hoverIdx:-1,hoverDist:0,selected:new Set(),tractorActive:false,tractorOriginals:null,tractorCount:0,tractorFocusMode:'beam',tractorFocusKey:null,tractorLayout:null,tractorAnchored:false,tractorOrbitYaw:0,tractorOrbitPitch:0,tractorZoom:1};");
+  L.push("const aimState={magnet:false,hoverIdx:-1,hoverDist:0,selected:new Set(),tractorActive:false,tractorOriginals:null,tractorCount:0,tractorFocusMode:'beam',tractorFocusKey:null,tractorLayout:null,tractorAnchored:false,tractorOrbitYaw:0,tractorOrbitPitch:0,tractorZoom:1,tractorShape:'sphere'};");
   L.push("function updateTarget(){");
   L.push("  camera.getWorldDirection(_fwd);");
   L.push("  let bestMesh=null,bestMeshScore=Infinity,bestIdx=-1,bestScore=Infinity,bestDist=0;");
@@ -1099,7 +1100,8 @@ function updateAimUI(){
   if(restoreQuick){restoreQuick.style.display=aimState.tractorActive?'inline-flex':'none';restoreQuick.title='Restore docked links to universe';}
   if(tractorBtn){tractorBtn.disabled=n<1;tractorBtn.textContent=aimState.tractorActive?('Re-Tractor '+n):('Tractor '+n);}
   if(restoreBtn)restoreBtn.style.display=aimState.tractorActive?'inline-flex':'none';
-  if(dockStatus){dockStatus.style.display=n?'block':'none';dockStatus.textContent=n?(aimState.tractorActive?((aimState.tractorFocusMode==='galaxy'?'Galaxy Tray':'Beam Focus')+' · '+n+' docked · tap a card to unfold'):(n+' locked · ready to Beam · session only')):'';}
+  document.querySelectorAll('.fmtBtn').forEach(function(b){const active=isGalaxyOrbitMode()?galaxyShapeName():currentFormation;b.classList.toggle('active',b.dataset.f===active);});
+  if(dockStatus){dockStatus.style.display=n?'block':'none';dockStatus.textContent=n?(aimState.tractorActive?((aimState.tractorFocusMode==='galaxy'?('Galaxy '+galaxyShapeName()):'Beam Focus')+' · '+n+' docked · tap any node'):(n+' locked · ready to Beam · session only')):'';}
 }
 function toggleMagnetMode(){aimState.magnet=!aimState.magnet;updateAimUI();updateHUD();showToast(aimState.magnet?'🧲 Aim lock on: aim and tap links':'🧲 Aim lock off');}
 function toggleAimLock(){
@@ -1175,7 +1177,7 @@ function restoreTractorBeam(silent){
   if(!aimState.tractorActive&&!aimState.tractorOriginals){if(!silent)showToast('No tractor staging to restore');return;}
   const originals=aimState.tractorOriginals||{};
   Object.keys(originals).forEach(function(k){const p=nodeData[Number(k)],o=originals[k];if(p&&o){setNodeVisualPosition(p,o.x,o.y,o.z);if(p.mesh){if(o.q)p.mesh.quaternion.set(o.q.x,o.q.y,o.q.z,o.q.w);p.mesh.userData.beamDocked=false;}}});
-  aimState.tractorActive=false;aimState.tractorOriginals=null;aimState.tractorCount=0;aimState.tractorFocusMode='beam';aimState.tractorFocusKey=null;aimState.tractorLayout=null;aimState.tractorAnchored=false;aimState.tractorOrbitYaw=0;aimState.tractorOrbitPitch=0;aimState.tractorZoom=1;
+  aimState.tractorActive=false;aimState.tractorOriginals=null;aimState.tractorCount=0;aimState.tractorFocusMode='beam';aimState.tractorFocusKey=null;aimState.tractorLayout=null;aimState.tractorAnchored=false;aimState.tractorOrbitYaw=0;aimState.tractorOrbitPitch=0;aimState.tractorZoom=1;aimState.tractorShape='sphere';
   applySearchlight();updateAimUI();updateHUD();
   if(!silent)showToast('Restored locked links to universe');
 }
@@ -1234,10 +1236,10 @@ function tractorBeamSelected(opts){
     originals[idx]={x:p.x,y:p.y,z:p.z,q:p.mesh?{x:p.mesh.quaternion.x,y:p.mesh.quaternion.y,z:p.mesh.quaternion.z,w:p.mesh.quaternion.w}:null};
     if(p.mesh){loadTierFor(p.mesh,mode==='galaxy'?'full':'thumb');maybeLoadLabelsFor(p.mesh,0,true);}
   });
-  aimState.tractorActive=true;aimState.tractorOriginals=originals;aimState.tractorCount=Object.keys(originals).length;aimState.tractorFocusMode=mode;aimState.tractorFocusKey=key;aimState.tractorLayout=null;aimState.tractorAnchored=false;aimState.tractorOrbitYaw=0;aimState.tractorOrbitPitch=0;aimState.tractorZoom=1;
+  aimState.tractorActive=true;aimState.tractorOriginals=originals;aimState.tractorCount=Object.keys(originals).length;aimState.tractorFocusMode=mode;aimState.tractorFocusKey=key;aimState.tractorLayout=null;aimState.tractorAnchored=false;aimState.tractorOrbitYaw=0;aimState.tractorOrbitPitch=0;aimState.tractorZoom=1;aimState.tractorShape='sphere';
   aimState.magnet=false;speed=0;syncNavSpeed();clearNavHeld();
   updateDockedTray(true);
-  applySearchlight();updateAimUI();updateHUD();showToast(mode==='galaxy'?('Galaxy Orbit: '+(key||'galaxy')+' · drag rotate · pinch zoom'):'Beam Focus ready: tap a docked card to unfold');
+  applySearchlight();updateAimUI();updateHUD();showToast(mode==='galaxy'?('Galaxy Orbit: '+(key||'galaxy')+' · shape buttons · tap any node'):'Beam Focus ready: tap a docked card to unfold');
 }
 function selectWaypointResult(matchPos){selectSearchResult(matchPos,true);}
 function updateSearchRadar(){
