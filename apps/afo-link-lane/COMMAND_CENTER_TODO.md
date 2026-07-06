@@ -210,6 +210,37 @@ Validation target:
 - Large galaxies do not overload iPhone rendering or UI readability.
 - Restore returns to the normal universe.
 
+## v2.3.18.11 Galaxy Focus Reading Surface Polish
+
+Goal: tighten the manually validated Galaxy Focus experience before adding persistence or new ingestion providers.
+
+Scope:
+
+- Improve the focused galaxy nodes now that only a small batch is visible.
+- Remove distracting node pulse behavior in Beam and Galaxy Focus.
+- Use the saved frame budget from no-pulse and reduced visible nodes for higher-quality focused node faces.
+- Keep Galaxy Focus batches centered in front of the camera as a stable reading tray.
+- Preserve one-at-a-time card unfold from a focused galaxy batch.
+- Add a path toward unfolding the whole focused galaxy into a feed-like reading surface.
+- Make the text preview less blocking while keeping it useful.
+
+Build order:
+
+1. Centered Galaxy Tray.
+2. Calm High-Quality Focus Nodes and remove pulsing.
+3. Non-Blocking Preview HUD.
+4. Whole-Galaxy Feed Unfold.
+
+Validation target:
+
+- Galaxy Focus shows a calm centered tray of up to 24 readable nodes.
+- Focused nodes look better than normal far nodes without hurting iPhone performance.
+- Node pulsing is gone during focused reading.
+- The preview no longer blocks the primary node grid.
+- One node can still be selected and unfolded.
+- The focused batch can be unfolded into a feed-like reading surface.
+- Restore returns to normal universe mode.
+
 ## v2.3.19 Saved Research Galaxies
 
 Goal: persist user-created research galaxies from Searchlight, Beam selections, and Galaxy Focus batches so the universe becomes a true research organization system.
