@@ -1,4 +1,4 @@
-const VERSION = "2.3.18.10-galaxy-focus-mode";
+const VERSION = "2.3.18.10.1-galaxy-focus-visible-control";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -1083,10 +1083,11 @@ function plainAimLabel(p,max){
   const n=max||80;return raw.length>n?raw.slice(0,n-1)+'…':raw;
 }
 function updateAimUI(){
-  const btn=document.getElementById('magnetBtn'),beamBtn=document.getElementById('tractorQuickBtn'),restoreQuick=document.getElementById('restoreQuickBtn'),tractorBtn=document.getElementById('tractorBtn'),restoreBtn=document.getElementById('restoreTractorBtn'),dockStatus=document.getElementById('dockStatus');
+  const btn=document.getElementById('magnetBtn'),beamBtn=document.getElementById('tractorQuickBtn'),galaxyQuick=document.getElementById('galaxyFocusQuickBtn'),restoreQuick=document.getElementById('restoreQuickBtn'),tractorBtn=document.getElementById('tractorBtn'),restoreBtn=document.getElementById('restoreTractorBtn'),dockStatus=document.getElementById('dockStatus');
   const n=aimState.selected.size;
   if(btn){btn.classList.toggle('active',aimState.magnet);btn.classList.toggle('hasLocks',n>0);btn.textContent=n?('🧲 '+n):'🧲';btn.title=n?(n+' locked link'+(n===1?'':'s')):'Aim lock selector';}
   if(beamBtn){beamBtn.disabled=n<1;beamBtn.classList.toggle('active',aimState.tractorActive);beamBtn.textContent=aimState.tractorActive?'Re-Beam':'Beam';beamBtn.title=n?('Stage '+n+' locked link'+(n===1?'':'s')):'Lock links with the magnet first';}
+  if(galaxyQuick){const gp=galaxyFocusSourceNode();galaxyQuick.disabled=!gp;galaxyQuick.textContent=gp?'Galaxy':'Galaxy';galaxyQuick.title=gp?('Focus '+galaxyKeyOf(gp)+' into the Beam dock'):'Aim at a galaxy link first';}
   if(restoreQuick){restoreQuick.style.display=aimState.tractorActive?'inline-flex':'none';restoreQuick.title='Restore docked links to universe';}
   if(tractorBtn){tractorBtn.disabled=n<1;tractorBtn.textContent=aimState.tractorActive?('Re-Tractor '+n):('Tractor '+n);}
   if(restoreBtn)restoreBtn.style.display=aimState.tractorActive?'inline-flex':'none';
@@ -1799,7 +1800,10 @@ function buildGameHTML(layout){
     ".magnetBtn.hasLocks{color:#fff;border-color:#ffeeaa;}",
     ".beamBtn{min-width:66px;font-size:12px;padding:0 10px;letter-spacing:.04em;}",
     ".beamBtn:not(:disabled){border-color:#ffeeaa;color:#fff;background:rgba(255,190,80,0.16);box-shadow:0 0 10px rgba(255,190,80,0.22);}",
-    ".beamBtn.active{border-color:#fff;background:rgba(255,220,120,0.24);}",    ".restoreQuickBtn{display:none;min-width:78px;font-size:12px;padding:0 10px;letter-spacing:.03em;border-color:rgba(255,210,0,.48);color:#ffdd55;background:rgba(255,210,0,.10);}",
+    ".beamBtn.active{border-color:#fff;background:rgba(255,220,120,0.24);}",
+    ".galaxyFocusQuickBtn{min-width:72px;border-color:rgba(0,255,136,.42);color:#cfffdf;background:rgba(0,255,136,.10);}",
+    ".galaxyFocusQuickBtn:not(:disabled){border-color:#00ff88;color:#fff;background:rgba(0,255,136,.18);box-shadow:0 0 10px rgba(0,255,136,.22);}",
+    ".restoreQuickBtn{display:none;min-width:78px;font-size:12px;padding:0 10px;letter-spacing:.03em;border-color:rgba(255,210,0,.48);color:#ffdd55;background:rgba(255,210,0,.10);}",
     ".restoreQuickBtn:active{background:rgba(255,210,0,.24);color:#fff;}",
     "#dockStatus{display:none;color:#ffdd88;font-size:11px;letter-spacing:.04em;text-transform:uppercase;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:14px;}",
     ".beamBtn:disabled{opacity:.42;}",
@@ -1807,7 +1811,7 @@ function buildGameHTML(layout){
     ".searchInput:focus{border-color:#00ff88;box-shadow:0 0 12px rgba(0,255,136,0.18);}",
     ".searchControls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;align-items:stretch;}",
     "#searchCount{grid-column:1/-1;color:#00ff88;font-size:11px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
-    "#clusterSearchBtn,#galaxyFocusBtn,#returnUniverseBtn,#tractorBtn,#restoreTractorBtn{grid-column:1/-1;}" ,
+    "#clusterSearchBtn,#galaxyFocusBtn,#returnUniverseBtn,#tractorBtn,#restoreTractorBtn{grid-column:1/-1;}",
     "#searchSelected{color:#dff;font-size:11px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:14px;opacity:.88;}",
     ".searchDeck:not(.open){align-self:center;padding:4px;border-color:rgba(0,255,136,0.16);background:transparent;box-shadow:none;}",
     ".searchDeck:not(.open) .searchInput,.searchDeck:not(.open) .searchClear,.searchDeck:not(.open) .searchControls,.searchDeck:not(.open) #searchSelected{display:none;}",
@@ -1911,6 +1915,7 @@ function buildGameHTML(layout){
     "      <button type='button' id='searchToggle' class='searchIcon' onclick='toggleSearchDeck()'>⌕</button>",
     "      <button type='button' id='magnetBtn' class='searchIcon magnetBtn' onclick='return searchButtonAction(event,toggleMagnetMode)' title='Aim lock selector'>🧲</button>",
     "      <button type='button' id='tractorQuickBtn' class='searchIcon beamBtn' onclick='return searchButtonAction(event,tractorBeamSelected)' disabled title='Beam locked links'>Beam</button>",
+    "      <button type='button' id='galaxyFocusQuickBtn' class='searchIcon beamBtn galaxyFocusQuickBtn' onclick='return searchButtonAction(event,focusCurrentGalaxy)' disabled title='Focus current galaxy'>Galaxy</button>",
     "      <button type='button' id='restoreQuickBtn' class='searchIcon restoreQuickBtn' onclick='return searchButtonAction(event,restoreTractorBeam)' style='display:none' title='Restore docked links'>Restore</button>",
     "      <input id='searchInput' class='searchInput' type='search' inputmode='search' placeholder='Search AI, WebAssembly, arXiv...' oninput='updateSearchQuery(this.value)' onfocus='toggleSearchDeck(true)'>",
     "      <button type='button' class='searchClear' onclick='clearSearch()'>×</button>",
