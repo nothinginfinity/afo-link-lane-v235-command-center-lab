@@ -1,4 +1,4 @@
-const VERSION = "2.3.18.11.2.1-live-visible-focus-quality-fix";
+const VERSION = "2.3.18.11.2.2-galaxy-focus-reticle-navigation-fix";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -1027,7 +1027,7 @@ function maybeLoadLabelsFor(mesh,dist,force){if(!mesh||!mesh.userData)return;con
   L.push("}");
 
   L.push("const _toMesh=new THREE.Vector3(),_fwd=new THREE.Vector3(),_aimWorld=new THREE.Vector3(),_aimNdc=new THREE.Vector3();");
-  L.push("const aimState={magnet:false,hoverIdx:-1,hoverDist:0,selected:new Set(),tractorActive:false,tractorOriginals:null,tractorCount:0,tractorFocusMode:'beam',tractorFocusKey:null,tractorLayout:null};");
+  L.push("const aimState={magnet:false,hoverIdx:-1,hoverDist:0,selected:new Set(),tractorActive:false,tractorOriginals:null,tractorCount:0,tractorFocusMode:'beam',tractorFocusKey:null,tractorLayout:null,tractorAnchored:false};");
   L.push("function updateTarget(){");
   L.push("  camera.getWorldDirection(_fwd);");
   L.push("  let bestMesh=null,bestMeshScore=Infinity,bestIdx=-1,bestScore=Infinity,bestDist=0;");
@@ -1162,7 +1162,7 @@ function restoreTractorBeam(silent){
   if(!aimState.tractorActive&&!aimState.tractorOriginals){if(!silent)showToast('No tractor staging to restore');return;}
   const originals=aimState.tractorOriginals||{};
   Object.keys(originals).forEach(function(k){const p=nodeData[Number(k)],o=originals[k];if(p&&o){setNodeVisualPosition(p,o.x,o.y,o.z);if(p.mesh){if(o.q)p.mesh.quaternion.set(o.q.x,o.q.y,o.q.z,o.q.w);p.mesh.userData.beamDocked=false;}}});
-  aimState.tractorActive=false;aimState.tractorOriginals=null;aimState.tractorCount=0;aimState.tractorFocusMode='beam';aimState.tractorFocusKey=null;aimState.tractorLayout=null;
+  aimState.tractorActive=false;aimState.tractorOriginals=null;aimState.tractorCount=0;aimState.tractorFocusMode='beam';aimState.tractorFocusKey=null;aimState.tractorLayout=null;aimState.tractorAnchored=false;
   applySearchlight();updateAimUI();updateHUD();
   if(!silent)showToast('Restored locked links to universe');
 }
@@ -1174,12 +1174,21 @@ function dockTrayLayout(count){
   const dist=galaxy?Math.max(330,Math.min(460,290+rows*28)):330;
   return {cols:cols,rows:rows,spacing:spacing,dist:dist};
 }
-function updateDockedTray(){
+function updateDockedTray(force){
   if(!aimState.tractorActive)return;
   const picks=selectedAimIndices();
   if(!picks.length)return;
-  const count=picks.length,layout=dockTrayLayout(count);
+  const count=picks.length,layout=aimState.tractorLayout||dockTrayLayout(count);
+  const galaxy=aimState.tractorFocusMode==='galaxy';
+  if(galaxy&&aimState.tractorAnchored&&!force){
+    picks.forEach(function(idx){
+      const p=nodeData[idx];if(!p)return;
+      if(p.mesh){orientDockedNode(p);maybeLoadLabelsFor(p.mesh,0,true);p.mesh.scale.setScalar(searchScaleFor(idx,false));}
+    });
+    return;
+  }
   aimState.tractorLayout=layout;
+  if(galaxy)aimState.tractorAnchored=true;
   camera.updateMatrixWorld();
   const forward=new THREE.Vector3();camera.getWorldDirection(forward);
   const right=new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion);
@@ -1207,9 +1216,9 @@ function tractorBeamSelected(opts){
     originals[idx]={x:p.x,y:p.y,z:p.z,q:p.mesh?{x:p.mesh.quaternion.x,y:p.mesh.quaternion.y,z:p.mesh.quaternion.z,w:p.mesh.quaternion.w}:null};
     if(p.mesh){loadTierFor(p.mesh,mode==='galaxy'?'full':'thumb');maybeLoadLabelsFor(p.mesh,0,true);}
   });
-  aimState.tractorActive=true;aimState.tractorOriginals=originals;aimState.tractorCount=Object.keys(originals).length;aimState.tractorFocusMode=mode;aimState.tractorFocusKey=key;aimState.tractorLayout=null;
+  aimState.tractorActive=true;aimState.tractorOriginals=originals;aimState.tractorCount=Object.keys(originals).length;aimState.tractorFocusMode=mode;aimState.tractorFocusKey=key;aimState.tractorLayout=null;aimState.tractorAnchored=false;
   aimState.magnet=false;speed=0;syncNavSpeed();clearNavHeld();
-  updateDockedTray();
+  updateDockedTray(true);
   applySearchlight();updateAimUI();updateHUD();showToast(mode==='galaxy'?('Galaxy Tray centered: '+(key||'galaxy')+' · '+aimState.tractorCount+' links'):'Beam Focus ready: tap a docked card to unfold');
 }
 function selectWaypointResult(matchPos){selectSearchResult(matchPos,true);}
