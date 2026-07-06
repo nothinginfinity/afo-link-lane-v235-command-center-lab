@@ -1,4 +1,4 @@
-const VERSION = "2.3.18.11.5-galaxy-focus-shapes-safe-select";
+const VERSION = "2.3.18.11.6-restore-clears-magnet-locks";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -1097,7 +1097,7 @@ function updateAimUI(){
   if(btn){btn.classList.toggle('active',aimState.magnet);btn.classList.toggle('hasLocks',n>0);btn.textContent=n?('🧲 '+n):'🧲';btn.title=n?(n+' locked link'+(n===1?'':'s')):'Aim lock selector';}
   if(beamBtn){beamBtn.disabled=n<1;beamBtn.classList.toggle('active',aimState.tractorActive);beamBtn.textContent=aimState.tractorActive?'Re-Beam':'Beam';beamBtn.title=n?('Stage '+n+' locked link'+(n===1?'':'s')):'Lock links with the magnet first';}
   if(galaxyQuick){const gp=galaxyFocusSourceNode();galaxyQuick.disabled=!gp;galaxyQuick.textContent=gp?'Galaxy':'Galaxy';galaxyQuick.title=gp?('Focus '+galaxyKeyOf(gp)+' into the Beam dock'):'Aim at a galaxy link first';}
-  if(restoreQuick){restoreQuick.style.display=aimState.tractorActive?'inline-flex':'none';restoreQuick.title='Restore docked links to universe';}
+  if(restoreQuick){restoreQuick.style.display=aimState.tractorActive?'inline-flex':'none';restoreQuick.title='Restore docked links and clear magnet locks';}
   if(tractorBtn){tractorBtn.disabled=n<1;tractorBtn.textContent=aimState.tractorActive?('Re-Tractor '+n):('Tractor '+n);}
   if(restoreBtn)restoreBtn.style.display=aimState.tractorActive?'inline-flex':'none';
   document.querySelectorAll('.fmtBtn').forEach(function(b){const active=isGalaxyOrbitMode()?galaxyShapeName():currentFormation;b.classList.toggle('active',b.dataset.f===active);});
@@ -1215,8 +1215,9 @@ function restoreTractorBeam(silent){
   const originals=aimState.tractorOriginals||{};
   Object.keys(originals).forEach(function(k){const p=nodeData[Number(k)],o=originals[k];if(p&&o){setNodeVisualPosition(p,o.x,o.y,o.z);if(p.mesh){if(o.q)p.mesh.quaternion.set(o.q.x,o.q.y,o.q.z,o.q.w);p.mesh.userData.beamDocked=false;}}});
   aimState.tractorActive=false;aimState.tractorOriginals=null;aimState.tractorCount=0;aimState.tractorFocusMode='beam';aimState.tractorFocusKey=null;aimState.tractorLayout=null;aimState.tractorAnchored=false;aimState.tractorOrbitYaw=0;aimState.tractorOrbitPitch=0;aimState.tractorZoom=1;aimState.tractorShape='sphere';
+  if(!silent){aimState.selected.clear();aimState.magnet=false;aimState.hoverIdx=-1;aimState.hoverDist=0;targeted=null;}
   applySearchlight();updateAimUI();updateHUD();
-  if(!silent)showToast('Restored locked links to universe');
+  if(!silent)showToast('Restored and unlocked links');
 }
 function dockTrayLayout(count){
   const galaxy=aimState.tractorFocusMode==='galaxy';
