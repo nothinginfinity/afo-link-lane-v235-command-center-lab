@@ -1661,6 +1661,7 @@ function closeFocus(){
   L.push("  focus=null;gameState='flying';closeFocusCarousel(true);");
   L.push("}");
 
+  L.push("let lastPinchAt=0;");
   L.push("function startTouch(x,y){touchActive=true;touchStartX=x;touchStartY=y;lastX=x;lastY=y;isTap=true;}");
   L.push("function moveTouch(x,y){");
   L.push("  if(!touchActive) return;");
@@ -1670,26 +1671,26 @@ function closeFocus(){
   L.push("  lastX=x;lastY=y;");
   L.push("  if(Math.abs(x-touchStartX)>10||Math.abs(y-touchStartY)>10) isTap=false;");
   L.push("}");
-  L.push("function endTouch(){if(isTap){if(gameState==='flying')trySelect();else if(gameState==='focused')closeFocus();}touchActive=false;yawVel=0;pitchVel=0;}");
+  L.push("function endTouch(){if(!touchActive){yawVel=0;pitchVel=0;return;}const pinchCooling=Date.now()-lastPinchAt<480;if(isTap&&!pinchCooling){if(gameState==='flying'){if(isGalaxyOrbitMode())trySelectAt(touchStartX,touchStartY);else trySelect();}else if(gameState==='focused')closeFocus();}touchActive=false;yawVel=0;pitchVel=0;}");
 
   L.push("let isPinching=false,pinchStartDist=0,pinchStartSpeed=0,pinchStartGalaxyZoom=1;");
   L.push("const PINCH_SENSITIVITY=0.06;");
   L.push("function touchDist(t1,t2){const dx=t1.clientX-t2.clientX,dy=t1.clientY-t2.clientY;return Math.sqrt(dx*dx+dy*dy);}");
-  L.push("function startPinch(t1,t2){isPinching=true;pinchStartDist=touchDist(t1,t2);pinchStartSpeed=speed;pinchStartGalaxyZoom=aimState.tractorZoom||1;touchActive=false;}");
+  L.push("function startPinch(t1,t2){isPinching=true;lastPinchAt=Date.now();isTap=false;pinchStartDist=touchDist(t1,t2);pinchStartSpeed=speed;pinchStartGalaxyZoom=aimState.tractorZoom||1;touchActive=false;}");
   L.push("function movePinch(t1,t2){");
-  L.push("  const dist=touchDist(t1,t2);");
+  L.push("  const dist=touchDist(t1,t2);lastPinchAt=Date.now();isTap=false;");
   L.push("  if(isGalaxyOrbitMode()){aimState.tractorZoom=clampGalaxyZoom(pinchStartGalaxyZoom+(dist-pinchStartDist)*0.003);updateDockedTray(true);updateTarget();updateHUD();return;}");
   L.push("  const delta=pinchStartDist-dist;");
   L.push("  speed=Math.max(-6,Math.min(14,pinchStartSpeed+delta*PINCH_SENSITIVITY));");
   L.push("}");
-  L.push("function endPinch(){isPinching=false;}");
+  L.push("function endPinch(){isPinching=false;lastPinchAt=Date.now();touchActive=false;isTap=false;yawVel=0;pitchVel=0;}");
 
   L.push("const canvas=document.getElementById('gc');");
   L.push("canvas.addEventListener('touchstart',function(e){");
   L.push("  e.preventDefault();");
   L.push("  const r=canvas.getBoundingClientRect();");
   L.push("  if(e.touches.length>=2){startPinch(e.touches[0],e.touches[1]);return;}");
-  L.push("  if(!isPinching){const t=e.touches[0];startTouch(t.clientX-r.left,t.clientY-r.top);}");
+  L.push("  if(!isPinching&&Date.now()-lastPinchAt>480){const t=e.touches[0];startTouch(t.clientX-r.left,t.clientY-r.top);}");
   L.push("},{passive:false});");
   L.push("canvas.addEventListener('touchmove',function(e){");
   L.push("  e.preventDefault();");
