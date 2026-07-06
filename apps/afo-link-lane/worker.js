@@ -1,4 +1,4 @@
-const VERSION = "2.3.18.9-beam-focus-isolation";
+const VERSION = "2.3.18.10-galaxy-focus-mode";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -1103,6 +1103,42 @@ function toggleAimLock(){
 }
 function selectedAimIndices(){return Array.from(aimState.selected).filter(function(idx){return Boolean(nodeData[idx]);});}
 function isBeamedIndex(idx){return aimState.tractorActive&&aimState.selected.has(idx);}
+function galaxyKeyOf(p){return (p&&(p.galaxyKey||p.group_name||p.domain))||'other';}
+function galaxyFocusSourceNode(){
+  if(aimState.hoverIdx>=0&&nodeData[aimState.hoverIdx])return nodeData[aimState.hoverIdx];
+  if(targeted&&targeted.userData)return targeted.userData;
+  const s=currentSearchNode();if(s)return s;
+  if(insideGalaxy){for(let i=0;i<nodeData.length;i++){if(nodeData[i]&&galaxyKeyOf(nodeData[i])===insideGalaxy)return nodeData[i];}}
+  return null;
+}
+function galaxyFocusBatchFor(source){
+  const key=galaxyKeyOf(source),refPos=nodePosition(source,new THREE.Vector3()),queryActive=Boolean(searchState.query&&searchState.matchSet&&searchState.matchSet.size);
+  let ranked=[];
+  function collect(useQuery){
+    ranked=[];
+    nodeData.forEach(function(p,idx){
+      if(!p||galaxyKeyOf(p)!==key)return;
+      if(useQuery&&!searchState.matchSet.has(idx))return;
+      const dist=nodePosition(p,_searchTmp).distanceTo(refPos);
+      ranked.push({idx:idx,dist:dist,date:String(p.published_at||p.added_at||''),title:String(p.title||'')});
+    });
+  }
+  collect(queryActive);
+  if(!ranked.length&&queryActive)collect(false);
+  ranked.sort(function(a,b){return a.dist-b.dist||b.date.localeCompare(a.date)||a.title.localeCompare(b.title);});
+  return ranked.slice(0,24).map(function(r){return r.idx;});
+}
+function focusCurrentGalaxy(){
+  const source=galaxyFocusSourceNode();
+  if(!source){showToast('Aim at a galaxy link first');return;}
+  const key=galaxyKeyOf(source),picks=galaxyFocusBatchFor(source);
+  if(!picks.length){showToast('No links found for '+key);return;}
+  if(searchState.clusterActive)restoreSearchGalaxyPreview(true);
+  if(aimState.tractorActive)restoreTractorBeam(true);
+  aimState.selected.clear();picks.forEach(function(idx){aimState.selected.add(idx);});
+  tractorBeamSelected();
+  showToast('Galaxy Focus: '+key+' - '+picks.length+' link batch');
+}
 function orientDockedNode(p){
   if(!p||!p.mesh)return;
   p.mesh.quaternion.copy(camera.quaternion);
@@ -1254,9 +1290,10 @@ function updateSearchUI(){
   const deck=document.getElementById('searchDeck'),count=document.getElementById('searchCount'),input=document.getElementById('searchInput'),selected=document.getElementById('searchSelected');
   if(deck)deck.classList.toggle('open',searchState.open||Boolean(searchState.query));
   if(input&&document.activeElement!==input)input.value=searchState.query;
-  const clusterBtn=document.getElementById('clusterSearchBtn'),returnBtn=document.getElementById('returnUniverseBtn'),tractorBtn=document.getElementById('tractorBtn'),restoreTractorBtn=document.getElementById('restoreTractorBtn');
+  const clusterBtn=document.getElementById('clusterSearchBtn'),returnBtn=document.getElementById('returnUniverseBtn'),galaxyFocusBtn=document.getElementById('galaxyFocusBtn'),tractorBtn=document.getElementById('tractorBtn'),restoreTractorBtn=document.getElementById('restoreTractorBtn');
   if(clusterBtn)clusterBtn.disabled=!searchState.query||!searchState.matches.length;
   if(returnBtn)returnBtn.style.display=searchState.clusterActive?'inline-flex':'none';
+  if(galaxyFocusBtn){const gp=galaxyFocusSourceNode();galaxyFocusBtn.disabled=!gp;galaxyFocusBtn.textContent=gp?('Galaxy Focus: '+String(galaxyKeyOf(gp)).slice(0,22)):'Galaxy Focus';}
   if(tractorBtn)tractorBtn.disabled=aimState.selected.size<1;
   if(restoreTractorBtn)restoreTractorBtn.style.display=aimState.tractorActive?'inline-flex':'none';
   if(selected)selected.textContent='';
@@ -1770,7 +1807,7 @@ function buildGameHTML(layout){
     ".searchInput:focus{border-color:#00ff88;box-shadow:0 0 12px rgba(0,255,136,0.18);}",
     ".searchControls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;align-items:stretch;}",
     "#searchCount{grid-column:1/-1;color:#00ff88;font-size:11px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
-    "#clusterSearchBtn,#returnUniverseBtn,#tractorBtn,#restoreTractorBtn{grid-column:1/-1;}",
+    "#clusterSearchBtn,#galaxyFocusBtn,#returnUniverseBtn,#tractorBtn,#restoreTractorBtn{grid-column:1/-1;}" ,
     "#searchSelected{color:#dff;font-size:11px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:14px;opacity:.88;}",
     ".searchDeck:not(.open){align-self:center;padding:4px;border-color:rgba(0,255,136,0.16);background:transparent;box-shadow:none;}",
     ".searchDeck:not(.open) .searchInput,.searchDeck:not(.open) .searchClear,.searchDeck:not(.open) .searchControls,.searchDeck:not(.open) #searchSelected{display:none;}",
@@ -1885,6 +1922,7 @@ function buildGameHTML(layout){
     "      <button type='button' class='searchBtn' onclick='return searchButtonAction(event,nextSearchResult)'>Next</button>",
     "      <button type='button' class='searchBtn' onclick='return searchButtonAction(event,flyToSearchResult)'>Fly</button>",
     "      <button type='button' id='clusterSearchBtn' class='searchBtn' onclick='return searchButtonAction(event,clusterSearchResults)'>Cluster Results</button>",
+    "      <button type='button' id='galaxyFocusBtn' class='searchBtn' onclick='return searchButtonAction(event,focusCurrentGalaxy)' disabled>Galaxy Focus</button>",
     "      <button type='button' id='returnUniverseBtn' class='searchBtn' onclick='return searchButtonAction(event,returnToUniverse)' style='display:none'>Return to Universe</button>",
     "      <button type='button' id='tractorBtn' class='searchBtn' onclick='return searchButtonAction(event,tractorBeamSelected)' disabled>Tractor 0</button>",
     "      <button type='button' id='restoreTractorBtn' class='searchBtn' onclick='return searchButtonAction(event,restoreTractorBeam)' style='display:none'>Restore Locked Positions</button>",
