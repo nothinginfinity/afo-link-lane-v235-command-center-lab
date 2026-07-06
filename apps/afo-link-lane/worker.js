@@ -1,4 +1,4 @@
-const VERSION = "2.3.18.11.2-calm-high-quality-focus-nodes";
+const VERSION = "2.3.18.11.2.1-live-visible-focus-quality-fix";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -1205,7 +1205,7 @@ function tractorBeamSelected(opts){
     const p=nodeData[idx];if(!p)return;
     if(!p.promoted&&planetMeshes.length<MAX_PROMOTED)promoteNode(idx);
     originals[idx]={x:p.x,y:p.y,z:p.z,q:p.mesh?{x:p.mesh.quaternion.x,y:p.mesh.quaternion.y,z:p.mesh.quaternion.z,w:p.mesh.quaternion.w}:null};
-    if(p.mesh){loadTierFor(p.mesh,'thumb');maybeLoadLabelsFor(p.mesh,0,true);}
+    if(p.mesh){loadTierFor(p.mesh,mode==='galaxy'?'full':'thumb');maybeLoadLabelsFor(p.mesh,0,true);}
   });
   aimState.tractorActive=true;aimState.tractorOriginals=originals;aimState.tractorCount=Object.keys(originals).length;aimState.tractorFocusMode=mode;aimState.tractorFocusKey=key;aimState.tractorLayout=null;
   aimState.magnet=false;speed=0;syncNavSpeed();clearNavHeld();
