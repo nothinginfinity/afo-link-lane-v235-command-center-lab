@@ -357,8 +357,10 @@ Validation target:
 
 ## Current sequence recommendation
 
-1. v2.3.18.9 Beam Focus Isolation.
-2. v2.3.18.10 Galaxy Focus Mode.
+1. v2.3.18.11.1 Centered Galaxy Tray.
+2. v2.3.18.11.2 Calm High-Quality Focus Nodes and remove pulsing.
+3. v2.3.18.11.3 Non-Blocking Preview HUD.
+4. v2.3.18.11.4 Whole-Galaxy Feed Unfold.
 3. v2.3.19 Saved Research Galaxies, spec-first, with D1/schema review before code.
 4. v2.3.20 Social Embed and Sports Link Ingestion for ESPN, X/Twitter, YouTube, Instagram, TikTok, and normalized embed URLs.
 
