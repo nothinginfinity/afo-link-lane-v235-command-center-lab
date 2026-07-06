@@ -1115,6 +1115,8 @@ function toggleAimLock(){
 function selectedAimIndices(){return Array.from(aimState.selected).filter(function(idx){return Boolean(nodeData[idx]);});}
 function isBeamedIndex(idx){return aimState.tractorActive&&aimState.selected.has(idx);}
 function isGalaxyOrbitMode(){return aimState.tractorActive&&aimState.tractorFocusMode==='galaxy';}
+function galaxyShapeName(){return aimState.tractorShape||'sphere';}
+function prettyGalaxyShape(){const s=galaxyShapeName();return s.charAt(0).toUpperCase()+s.slice(1);}
 function clampGalaxyZoom(v){return Math.max(0.68,Math.min(1.7,v));}
 function setGalaxyOrbitDelta(dx,dy){
   if(!isGalaxyOrbitMode())return;
@@ -1126,6 +1128,41 @@ function setGalaxyZoomDelta(delta){
   if(!isGalaxyOrbitMode())return;
   aimState.tractorZoom=clampGalaxyZoom((aimState.tractorZoom||1)+delta);
   updateDockedTray(true);updateTarget();updateHUD();
+}
+function setGalaxyShape(name){
+  if(!isGalaxyOrbitMode()||!FORMATIONS[name])return;
+  aimState.tractorShape=name;
+  updateDockedTray(true);updateTarget();updateAimUI();updateHUD();
+  showToast('Galaxy shape: '+prettyGalaxyShape());
+}
+function cycleGalaxyShape(delta){
+  const shapes=['cube','sphere','spiral','torus'];
+  const cur=shapes.indexOf(galaxyShapeName());
+  setGalaxyShape(shapes[(cur+(delta||1)+shapes.length)%shapes.length]);
+}
+function galaxyPickIndexAt(x,y){
+  if(!isGalaxyOrbitMode())return -1;
+  const canvas=document.getElementById('gc');if(!canvas)return -1;
+  const w=canvas.clientWidth||canvas.width||1,h=canvas.clientHeight||canvas.height||1;
+  let best=-1,bestScore=Infinity;
+  selectedAimIndices().forEach(function(idx){
+    const p=nodeData[idx];if(!p)return;
+    nodePosition(p,_aimWorld);_aimNdc.copy(_aimWorld).project(camera);
+    if(_aimNdc.z<0||_aimNdc.z>1)return;
+    const sx=(_aimNdc.x*.5+.5)*w,sy=(-_aimNdc.y*.5+.5)*h;
+    const dx=sx-x,dy=sy-y,score=Math.sqrt(dx*dx+dy*dy);
+    const radius=Math.max(44,Math.min(86,54*(aimState.tractorZoom||1)));
+    if(score<radius&&score<bestScore){bestScore=score;best=idx;}
+  });
+  return best;
+}
+function trySelectAt(x,y){
+  if(isGalaxyOrbitMode()&&typeof x==='number'&&typeof y==='number'){
+    const hit=galaxyPickIndexAt(x,y);
+    if(hit>=0){aimState.hoverIdx=hit;updateTarget();inspectAimNode(hit);return;}
+    showToast('Tap a visible galaxy node');return;
+  }
+  trySelect();
 }
 function galaxyKeyOf(p){return (p&&(p.galaxyKey||p.group_name||p.domain))||'other';}
 function galaxyFocusSourceNode(){
