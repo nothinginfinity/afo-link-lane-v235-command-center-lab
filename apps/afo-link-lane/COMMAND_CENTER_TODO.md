@@ -331,11 +331,74 @@ Validation target:
 - Original link provenance is preserved.
 - Saved galaxies can be loaded back into the reading dock or shown as first-class galaxies.
 
+## v2.3.20 Social Embed and Sports Link Ingestion
+
+Goal: add ESPN, X/Twitter posts, and later YouTube/Instagram/TikTok-style embeds through a normalized link-ingestion pipeline.
+
+Why this matters:
+
+- Real research sessions often start from sports/news pages, social embeds, or redirected embed iframes rather than clean article URLs.
+- ESPN pages may contain embedded X/Twitter posts, Arena embeds, video cards, article links, and live-update modules.
+- X/Twitter embed iframe URLs are not RSS feeds, but they can often be normalized into canonical social-post links by extracting the post ID.
+- Link Lane should preserve where a link was discovered while storing a clean canonical URL for browsing and future research-galaxy saves.
+
+Initial source types:
+
+- ESPN article/page URLs.
+- ESPN-discovered embed URLs.
+- X/Twitter canonical URLs such as `x.com/{handle}/status/{id}` and `twitter.com/{handle}/status/{id}`.
+- X/Twitter iframe URLs such as `platform.twitter.com/embed/Tweet.html?...id={tweet_id}`.
+- Later: YouTube, Instagram, TikTok, Threads, Bluesky, and other public embed formats.
+
+Normalizer behavior:
+
+- Detect provider from hostname and path.
+- Extract canonical ID when possible.
+- Convert noisy embed URLs into clean canonical URLs.
+- Store `provider`, `provider_id`, `source_url`, `canonical_url`, `discovered_from`, `content_type`, and available metadata.
+- Preserve provenance, for example `discovered_from=espn.com` while the canonical item is an X/Twitter post.
+- Avoid storing session IDs, widget IDs, iframe widths, consent parameters, or other temporary embed-frame noise.
+
+Suggested content types:
+
+- `article`
+- `social_post`
+- `video`
+- `short_video`
+- `sports_update`
+- `embed`
+
+Possible UI behavior:
+
+- Add a paste/import path for a single URL.
+- When a noisy embed URL is pasted, show the normalized canonical URL before save.
+- Render social posts as source cards in the universe.
+- Group ESPN content into a Sports or ESPN galaxy/source family.
+- Allow X/Twitter posts discovered from ESPN to appear both under the social provider and under ESPN-discovered sports context.
+
+Backend/data considerations:
+
+- Prefer a normalization layer before insertion into the existing links table.
+- Reuse existing Open Graph extraction where possible.
+- Add optional fields only after reviewing the current D1 schema.
+- Do not scrape private or access-controlled content.
+- Treat public embeds as public link metadata only.
+- Check platform terms before using any provider-specific API or aggressive fetch strategy.
+
+Validation target:
+
+- Pasting an ESPN article creates a readable ESPN node with title/image/source metadata.
+- Pasting a `platform.twitter.com/embed/Tweet.html?...id=...` URL creates a clean X/Twitter social-post node.
+- Pasting a normal `x.com/.../status/...` or `twitter.com/.../status/...` URL creates the same canonical node format.
+- The node can be searched, aimed at, beamed, unfolded, viewed in the carousel, and later saved into research galaxies.
+- No duplicate nodes are created when the same social post is encountered through multiple embed URLs.
+
 ## Current sequence recommendation
 
 1. v2.3.18.9 Beam Focus Isolation.
 2. v2.3.18.10 Galaxy Focus Mode.
 3. v2.3.19 Saved Research Galaxies, spec-first, with D1/schema review before code.
+4. v2.3.20 Social Embed and Sports Link Ingestion.
 4. v2.3.20 Social Embed and Sports Link Ingestion for ESPN, X/Twitter, YouTube, Instagram, TikTok, and normalized embed URLs.
 
 Roadmap note:
@@ -344,4 +407,5 @@ Roadmap note:
 - v2.3.18 is the temporary client-side research interaction layer.
 - v2.3.18.9 and v2.3.18.10 should finish the temporary/non-persistent research UX.
 - v2.3.19 is the first persistence phase and should not begin until the data model is approved.
+- v2.3.20 adds normalized public social/sports/embed ingestion after the core research organization model is stable.
 - v2.3.20 expands the ingestion pipeline so sports/social/embed links can become first-class Link Lane nodes.
