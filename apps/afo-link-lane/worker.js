@@ -1,4 +1,4 @@
-const VERSION = "2.3.18.11.1-centered-galaxy-tray";
+const VERSION = "2.3.18.11.2-calm-high-quality-focus-nodes";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -839,20 +839,25 @@ function budgetedPixelRatio(){return RENDER_BUDGET.pixelRatio;}`);
   L.push("  return spr;");
   L.push("}");
 
-  L.push("function makeFaceTexture(label,value,bgColor,isHighlight){");
-  L.push("  const c=document.createElement('canvas');c.width=256;c.height=256;");
+  L.push("function makeFaceTexture(label,value,bgColor,isHighlight,focusMode){");
+  L.push("  const size=focusMode?512:256;");
+  L.push("  const c=document.createElement('canvas');c.width=size;c.height=size;");
   L.push("  const ctx=c.getContext('2d');");
-  L.push("  ctx.fillStyle=bgColor||'#0a0a18';ctx.fillRect(0,0,256,256);");
-  L.push("  ctx.strokeStyle=isHighlight?'rgba(0,255,170,0.7)':'rgba(0,255,170,0.35)';ctx.lineWidth=5;ctx.strokeRect(3,3,250,250);");
-  L.push("  ctx.fillStyle='#00ff88';ctx.font='bold 17px monospace';ctx.textAlign='center';");
-  L.push("  ctx.fillText(label,128,34);");
-  L.push("  ctx.strokeStyle='rgba(0,255,136,0.3)';ctx.beginPath();ctx.moveTo(22,48);ctx.lineTo(234,48);ctx.stroke();");
-  L.push("  ctx.fillStyle='#e0e0e0';ctx.font='15px monospace';");
-  L.push("  const words=String(value||'(none)').split(' ');let lines=[],cur='';");
-  L.push("  words.forEach(function(w){const t=cur?cur+' '+w:w;if(ctx.measureText(t).width>216){lines.push(cur);cur=w;}else cur=t;});");
-  L.push("  if(cur)lines.push(cur);lines=lines.slice(0,8);");
-  L.push("  const startY=128-(lines.length-1)*11;");
-  L.push("  lines.forEach(function(line,i){ctx.fillText(line,128,startY+i*22);});");
+  L.push("  const pad=focusMode?28:18,inner=size-pad*2;");
+  L.push("  ctx.fillStyle=bgColor||'#0a0a18';ctx.fillRect(0,0,size,size);");
+  L.push("  ctx.fillStyle='rgba(255,255,255,0.035)';ctx.fillRect(pad,pad,inner,inner);");
+  L.push("  ctx.strokeStyle=isHighlight?'rgba(0,255,170,0.76)':'rgba(0,255,170,0.42)';ctx.lineWidth=focusMode?8:5;ctx.strokeRect(pad*0.55,pad*0.55,size-pad*1.1,size-pad*1.1);");
+  L.push("  ctx.fillStyle='#00ff88';ctx.font='bold '+(focusMode?32:17)+'px monospace';ctx.textAlign='center';ctx.textBaseline='alphabetic';");
+  L.push("  ctx.fillText(label,size/2,focusMode?62:34);");
+  L.push("  ctx.strokeStyle='rgba(0,255,136,0.34)';ctx.beginPath();ctx.moveTo(pad,focusMode?84:48);ctx.lineTo(size-pad,focusMode?84:48);ctx.stroke();");
+  L.push("  ctx.fillStyle='#f0fff8';ctx.font=(focusMode?'26px':'15px')+' monospace';");
+  L.push("  const raw=String(value||'(none)').replace(/\\s+/g,' ').trim();");
+  L.push("  const words=raw.split(' ');let lines=[],cur='',maxW=focusMode?430:216;");
+  L.push("  words.forEach(function(w){const t=cur?cur+' '+w:w;if(ctx.measureText(t).width>maxW&&cur){lines.push(cur);cur=w;}else cur=t;});");
+  L.push("  if(cur)lines.push(cur);lines=lines.slice(0,focusMode?7:8);");
+  L.push("  const step=focusMode?40:22,startY=(focusMode?250:128)-(lines.length-1)*step/2;");
+  L.push("  lines.forEach(function(line,i){ctx.fillText(line,size/2,startY+i*step);});");
+  L.push("  if(focusMode){ctx.fillStyle='rgba(0,255,136,0.55)';ctx.font='bold 18px monospace';ctx.fillText('GALAXY FOCUS',size/2,size-36);}");
   L.push("  const tex=new THREE.CanvasTexture(c);tex.generateMipmaps=false;tex.minFilter=THREE.LinearFilter;tex.magFilter=THREE.LinearFilter;return tex;");
   L.push("}");
 
@@ -923,9 +928,11 @@ function budgetedPixelRatio(){return RENDER_BUDGET.pixelRatio;}`);
   L.push("}");
 
   L.push("function loadLabelsFor(mesh){");
-  L.push("  if(mesh.userData.labelsLoaded) return;");
-  L.push("  mesh.userData.labelsLoaded=true;");
+  L.push("  if(!mesh||!mesh.userData)return;");
   L.push("  const p=mesh.userData;");
+  L.push("  const focusMode=Boolean(p.beamDocked||(aimState&&aimState.tractorActive&&aimState.selected&&aimState.selected.has(p.globalIdx)));");
+  L.push("  if(p.labelsLoaded&&(!focusMode||p.focusLabelsLoaded)) return;");
+  L.push("  p.labelsLoaded=true;if(focusMode)p.focusLabelsLoaded=true;");
   L.push("  const dateStr=(p.added_at||'').slice(0,10);");
   L.push("  const isYT=p.domain==='youtube.com';");
   L.push("  const typeLabel=isYT?(p.is_short?'\uD83D\uDCF1 SHORT':'\uD83C\uDFAC VIDEO'):'\uD83D\uDD17 LINK';");
@@ -934,7 +941,8 @@ function budgetedPixelRatio(){return RENDER_BUDGET.pixelRatio;}`);
   L.push("  const faces=[[0,'TITLE',p.title||p.url,'#0a0a18',false],[1,'CHANNEL',p.group_name||p.domain,'#0a0a18',false],[2,'TYPE',typeLabel,typeColor,Boolean(p.is_short)],[3,'PUBLISHED',pubDate,'#0a0a18',false],[5,'SOURCE',p.domain,'#0a1f16',true]];");
   L.push("  faces.forEach(function(f){");
   L.push("    const mat=mesh.material[f[0]];");
-  L.push("    mat.map=makeFaceTexture(f[1],f[2],f[3],f[4]);");
+  L.push("    if(mat.map&&mat.map.dispose)mat.map.dispose();");
+  L.push("    mat.map=makeFaceTexture(f[1],f[2],f[3],f[4],focusMode);");
   L.push("    mat.color.set(0xffffff);");
   L.push("    mat.needsUpdate=true;");
   L.push("  });");
@@ -990,7 +998,7 @@ function loadTierFor(mesh,tier){
   if(mesh.userData.queuedTier&&TIER_RANK[mesh.userData.queuedTier]>=TIER_RANK[tier])return;
   mesh.userData.queuedTier=tier;textureQueue.push({mesh:mesh,tier:tier});pumpTextureQueue();
 }
-function maybeLoadLabelsFor(mesh,dist,force){if(!mesh||mesh.userData.labelsLoaded)return;if(force||mesh===targeted||dist<RENDER_BUDGET.labelNearDist)loadLabelsFor(mesh);}`);
+function maybeLoadLabelsFor(mesh,dist,force){if(!mesh||!mesh.userData)return;const focusMode=Boolean(mesh.userData.beamDocked||(aimState&&aimState.tractorActive&&aimState.selected&&aimState.selected.has(mesh.userData.globalIdx)));if(mesh.userData.labelsLoaded&&(!focusMode||mesh.userData.focusLabelsLoaded))return;if(force||focusMode||mesh===targeted||dist<RENDER_BUDGET.labelNearDist)loadLabelsFor(mesh);}`);
   L.push("let lodCursor=0;");
   L.push("function updateLOD(){");
   L.push("  const promoteBatch=RENDER_BUDGET.promoteBatch;");
@@ -1284,14 +1292,14 @@ function searchScaleFor(idx,pulse){
   const locked=aimState&&aimState.selected&&aimState.selected.has(idx);
   const beamFocus=aimState&&aimState.tractorActive;
   const hovered=aimState&&aimState.hoverIdx===idx;
-  if(locked)return pulse?1.75+Math.sin(performance.now()*0.009)*0.12:1.78;
+  if(locked)return aimState.tractorFocusMode==='galaxy'?1.34:1.58;
   if(beamFocus)return 0.08;
-  if(hovered)return pulse?1.55+Math.sin(performance.now()*0.01)*0.08:1.58;
+  if(hovered)return 1.46;
   if(!searchState.query)return 1;
   if(!searchState.matchSet.has(idx))return 0.32;
   const selected=searchState.activeIndex>=0&&searchState.matches[searchState.activeIndex]===idx;
-  if(selected)return pulse?1.72+Math.sin(performance.now()*0.007)*0.18:1.82;
-  return 1.38;
+  if(selected)return 1.52;
+  return 1.28;
 }
 function applySearchlight(){
   planetMeshes.forEach(function(mesh){const idx=mesh.userData.globalIdx;const s=searchScaleFor(idx,false);mesh.scale.setScalar(s);});
@@ -1304,9 +1312,9 @@ function applySearchlight(){
   farMesh.instanceMatrix.needsUpdate=true;
 }
 function pulseSearchlight(){
-  if(searchState.query&&searchState.activeIndex>=0){const idx=searchState.matches[searchState.activeIndex],p=nodeData[idx];if(p&&p.mesh)p.mesh.scale.setScalar(searchScaleFor(idx,true));}
-  if(aimState.hoverIdx>=0){const hp=nodeData[aimState.hoverIdx];if(hp&&hp.mesh)hp.mesh.scale.setScalar(searchScaleFor(aimState.hoverIdx,true));}
-  aimState.selected.forEach(function(idx){const p=nodeData[idx];if(p&&p.mesh)p.mesh.scale.setScalar(searchScaleFor(idx,true));});
+  if(searchState.query&&searchState.activeIndex>=0){const idx=searchState.matches[searchState.activeIndex],p=nodeData[idx];if(p&&p.mesh)p.mesh.scale.setScalar(searchScaleFor(idx,false));}
+  if(aimState.hoverIdx>=0){const hp=nodeData[aimState.hoverIdx];if(hp&&hp.mesh)hp.mesh.scale.setScalar(searchScaleFor(aimState.hoverIdx,false));}
+  aimState.selected.forEach(function(idx){const p=nodeData[idx];if(p&&p.mesh)p.mesh.scale.setScalar(searchScaleFor(idx,false));});
 }
 function updateSearchUI(){
   const deck=document.getElementById('searchDeck'),count=document.getElementById('searchCount'),input=document.getElementById('searchInput'),selected=document.getElementById('searchSelected');
