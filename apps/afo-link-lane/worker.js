@@ -1279,7 +1279,8 @@ function updateDockedTray(force){
     if(p.mesh){orientDockedNode(p);maybeLoadLabelsFor(p.mesh,0,true);p.mesh.scale.setScalar(searchScaleFor(idx,false)*(galaxy?zoom:1));}
   });
 }
-function tractorBeamSelected(opts){"type":"replace_exact
+function tractorBeamSelected(opts){/*"type":"replace_exact
+*/
   const picks=selectedAimIndices();
   if(!picks.length){showToast('Lock links with 🧲 first');return;}
   if(aimState.tractorActive)restoreTractorBeam(true);
