@@ -1,0 +1,94 @@
+{
+  "worker": "afo-gitzip",
+  "version": "0.2.2-unified",
+  "action": "apply_repo_text_patch",
+  "target": {
+    "owner": "nothinginfinity",
+    "repo": "afo-link-lane-v235-command-center-lab",
+    "branch": "main",
+    "path": "apps/afo-link-lane/worker.js"
+  },
+  "source_sha": "98958d2ef3ec2b3202468359fcd8afff5c89bf24",
+  "result_sha": "dfc97302a6e74ed99e4c13347ff69e26967a0163",
+  "commit_sha": "7d7a47ac0d5a83558b9fd88bd8e20392dac0b879",
+  "diff": {
+    "before_length": 159838,
+    "after_length": 160186,
+    "delta": 348,
+    "common_prefix": 27,
+    "common_suffix": 85208,
+    "before_fingerprint": "858d1875",
+    "after_fingerprint": "ff05c37e"
+  },
+  "applied": [
+    {
+      "label": "op_0",
+      "type": "replace_exact",
+      "changed": true,
+      "replaced": 1
+    },
+    {
+      "label": "op_1",
+      "type": "replace_exact",
+      "changed": true,
+      "replaced": 1
+    },
+    {
+      "label": "op_2",
+      "type": "replace_exact",
+      "changed": true,
+      "replaced": 1
+    },
+    {
+      "label": "op_3",
+      "type": "replace_exact",
+      "changed": true,
+      "replaced": 1
+    },
+    {
+      "label": "op_4",
+      "type": "replace_exact",
+      "changed": true,
+      "replaced": 1
+    },
+    {
+      "label": "op_5",
+      "type": "replace_exact",
+      "changed": true,
+      "replaced": 1
+    },
+    {
+      "label": "op_6",
+      "type": "replace_exact",
+      "changed": true,
+      "replaced": 1
+    }
+  ],
+  "verification": {
+    "ok": true,
+    "results": [
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      }
+    ],
+    "failed": []
+  },
+  "timestamp": "2026-07-06T21:27:22.693Z"
+}
