@@ -1,4 +1,4 @@
-const VERSION = "2.3.18.11.2.2-galaxy-focus-reticle-navigation-fix";
+const VERSION = "2.3.18.11.3-non-blocking-preview-hud";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -1706,8 +1706,16 @@ function bindFlightHud(){
   const aimIdx=aimState.hoverIdx,aimNode=aimIdx>=0?nodeData[aimIdx]:null,aimLocked=aimIdx>=0&&aimState.selected.has(aimIdx);
   if(cross){cross.classList.toggle('locked',Boolean(targeted));cross.classList.toggle('aimHover',Boolean(aimNode));cross.classList.toggle('aimMagnet',aimState.magnet);cross.classList.toggle('aimSelected',aimLocked);}
   if(hint){
-    if(aimNode){const beamed=aimLocked&&aimState.tractorActive;hint.style.display='block';hint.textContent=beamed?('📖 BEAMED — '+plainAimLabel(aimNode,78)+' · tap to unfold'):((aimState.magnet?(aimLocked?'🧲 LOCKED — ':'🧲 AIM — '):(targeted?'TAP TO VIEW — ':'AIM — '))+plainAimLabel(aimNode,78)+(aimState.magnet?(aimLocked?' · tap to unlock':' · tap to lock'):''));}
-    else if(aimState.magnet){hint.style.display='block';hint.textContent='🧲 AIM LOCK — point at a link and tap';}
+    const focusActive=aimState.tractorActive,focusName=aimState.tractorFocusMode==='galaxy'?'Galaxy Tray':'Beam Focus';
+    if(aimNode){
+      const source=String(aimNode.group_name||aimNode.domain||'source').replace(/\s+/g,' ').slice(0,28);
+      const type=aimNode.domain==='youtube.com'?(aimNode.is_short?'short':'video'):'link';
+      const action=focusActive?'tap to unfold':(aimState.magnet?(aimLocked?'tap unlock':'tap lock'):'tap view');
+      const prefix=focusActive?(focusName+' · '):(aimState.magnet?(aimLocked?'Locked · ':'Aim lock · '):'Preview · ');
+      hint.style.display='block';hint.textContent=prefix+plainAimLabel(aimNode,54)+' · '+source+' · '+type+' · '+action;
+    }
+    else if(focusActive){hint.style.display='block';hint.textContent=focusName+' · '+aimState.selected.size+' docked · aim a card';}
+    else if(aimState.magnet){hint.style.display='block';hint.textContent='Aim lock · point at a link · tap to lock';}
     else{hint.style.display='none';}
   }
   const sl=document.getElementById('speedLabel');
@@ -1804,7 +1812,7 @@ function buildGameHTML(layout){
     "#crosshair.aimHover{border-color:#9ff;transform:scale(1.18);box-shadow:0 0 16px rgba(0,255,255,0.38);}",
     "#crosshair.aimMagnet{border-color:#ffcc66;box-shadow:0 0 18px rgba(255,190,80,0.44);}",
     "#crosshair.aimSelected{border-color:#fff;transform:scale(1.4);box-shadow:0 0 22px rgba(255,220,120,0.7);}",
-    "#targetHint{display:none;position:absolute;top:54%;left:50%;transform:translateX(-50%);color:#bfffe3;font-size:12px;background:rgba(0,0,0,0.72);border:1px solid rgba(0,255,136,0.28);padding:5px 10px;border-radius:6px;white-space:normal;max-width:92%;text-align:center;line-height:1.35;}",
+    "#targetHint{display:none;position:absolute;top:12px;left:12px;right:auto;transform:none;color:#dff;font-size:11px;background:linear-gradient(135deg,rgba(0,18,22,0.82),rgba(0,7,14,0.78));border:1px solid rgba(0,255,255,0.24);padding:6px 9px;border-radius:10px;white-space:nowrap;max-width:min(340px,72%);text-align:left;line-height:1.25;overflow:hidden;text-overflow:ellipsis;box-shadow:0 0 18px rgba(0,255,255,0.10);backdrop-filter:blur(8px);z-index:32;}"
     "#radarRing{display:none;position:absolute;top:50%;left:50%;width:112px;height:112px;margin:-56px 0 0 -56px;border:1px solid rgba(0,255,136,.34);border-radius:50%;box-shadow:0 0 24px rgba(0,255,136,.14),inset 0 0 18px rgba(0,255,136,.08);z-index:12;}",
     "#radarRing:before,#radarRing:after{content:'';position:absolute;background:rgba(0,255,136,.22);}",
     "#radarRing:before{left:50%;top:8px;bottom:8px;width:1px;}",
