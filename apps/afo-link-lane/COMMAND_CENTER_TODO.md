@@ -210,6 +210,75 @@ Validation target:
 - Large galaxies do not overload iPhone rendering or UI readability.
 - Restore returns to the normal universe.
 
+## v2.3.20 Social Embed and Sports Link Ingestion
+
+Goal: make Link Lane able to ingest sports/news/social links that appear as normal pages, embedded social posts, or redirected embed URLs, starting with ESPN and X/Twitter and later extending to YouTube, Instagram, TikTok, and similar providers.
+
+Why this matters:
+
+- ESPN and other sports/news pages often contain embedded social posts rather than simple article-only links.
+- A URL such as `platform.twitter.com/embed/Tweet.html?...id=...` is not an RSS feed; it is an embed iframe URL that should be normalized into a canonical X/Twitter post URL.
+- Link Lane should preserve where the item was discovered, for example an X post discovered through ESPN, while also storing the clean canonical post URL.
+
+Initial providers:
+
+- ESPN article/page links.
+- ESPN pages that expose X/Twitter embeds.
+- `x.com/.../status/...` links.
+- `twitter.com/.../status/...` links.
+- `platform.twitter.com/embed/Tweet.html?...id=...` links.
+
+Later providers:
+
+- YouTube video, Shorts, playlist, and embed links.
+- Instagram post/reel/embed links where public metadata is available.
+- TikTok video/embed links where public metadata is available.
+- Other sports/news liveblog embeds if they expose stable public URLs.
+
+Normalizer behavior:
+
+- Detect provider from URL host and path.
+- Extract post/video ID when the URL is an embed wrapper.
+- Convert Twitter/X embed URLs to canonical links such as `https://x.com/i/status/{id}` when the author handle is unknown.
+- Store `provider`, `provider_id`, `canonical_url`, `original_url`, `discovered_from_url`, `source_family`, and `content_type` metadata.
+- Use a content type such as `social_post`, `sports_article`, `video`, `short_video`, or `embed`.
+- Preserve ESPN/source provenance when social links are discovered through an ESPN page or Arena embed.
+
+Preview/render behavior:
+
+- Render normalized social embeds as Link Lane cards using available public metadata.
+- Fall back to provider, ID, canonical URL, and discovered-from source when rich metadata is unavailable.
+- Avoid depending on private cookies or user-specific sessions.
+- Do not store temporary session IDs from embed URLs as canonical data.
+
+RSS/feed relationship:
+
+- This is not the same as RSS ingestion.
+- If ESPN or another provider exposes a stable public RSS/feed URL for a section, it can be added through the existing feed-source path.
+- Social embed ingestion should work for pasted links and extracted page embeds even when no RSS feed exists.
+
+Safety and platform rules:
+
+- Public links only.
+- No private account scraping.
+- No bypassing paywalls, login walls, or platform access controls.
+- Respect provider terms and use official embed/oEmbed/public metadata paths where feasible.
+
+Possible UI:
+
+- Add URL accepts article, embed, and social-post URLs.
+- Show normalized provider badge, for example ESPN, X, YouTube, Instagram, TikTok.
+- Show `discovered via ESPN` or similar provenance when applicable.
+- Social posts can appear in Galaxy Focus, Beam Reading Dock, and Focus Card Carousel like any other link.
+
+Validation target:
+
+- Pasting an ESPN article adds a sports article card with source metadata.
+- Pasting a Twitter/X status link adds a normalized social-post card.
+- Pasting a `platform.twitter.com/embed/Tweet.html?...id=...` URL extracts the ID and stores a clean canonical X status URL.
+- The original embed URL is retained only as `original_url` or evidence, not as the main canonical link.
+- Existing feed sync, Searchlight, Beam, carousel, and future saved research galaxies continue to work.
+
 ## v2.3.19 Saved Research Galaxies
 
 Goal: persist user-created research galaxies from Searchlight, Beam selections, and Galaxy Focus batches so the universe becomes a true research organization system.
@@ -267,6 +336,7 @@ Validation target:
 1. v2.3.18.9 Beam Focus Isolation.
 2. v2.3.18.10 Galaxy Focus Mode.
 3. v2.3.19 Saved Research Galaxies, spec-first, with D1/schema review before code.
+4. v2.3.20 Social Embed and Sports Link Ingestion for ESPN, X/Twitter, YouTube, Instagram, TikTok, and normalized embed URLs.
 
 Roadmap note:
 
@@ -274,3 +344,4 @@ Roadmap note:
 - v2.3.18 is the temporary client-side research interaction layer.
 - v2.3.18.9 and v2.3.18.10 should finish the temporary/non-persistent research UX.
 - v2.3.19 is the first persistence phase and should not begin until the data model is approved.
+- v2.3.20 expands the ingestion pipeline so sports/social/embed links can become first-class Link Lane nodes.
