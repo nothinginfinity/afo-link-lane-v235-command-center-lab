@@ -16,6 +16,7 @@ const R_GALAXY = 1500;
 const MAX_UNIVERSE_NODES = 5000;
 const RESOURCE_R2_PREFIX = "resources/financial-aid-toolkit/";
 const MAX_RESOURCE_BYTES = 15 * 1024 * 1024;
+const MAX_EXTRACTED_TEXT_BYTES = 1024 * 1024;
 const PILOT_RESOURCE_IDS = new Set([
   "fat-do-you-need-money-pdf",
   "fat-money-management-checklist-pdf",
@@ -2350,6 +2351,43 @@ async function apiCapturePilotResource(env,request){
   return j({ok:true,resource_id:resourceId,sha256:sha256,size_bytes:buf.byteLength,original_key:originalKey,manifest_key:manifestKey,text_key:manifest.text_key,captured_at:capturedAt});
 }
 
+async function apiStorePilotText(env,request){
+  if(!env.LAB_INGEST_TOKEN) return j({ok:false,error:"LAB_INGEST_TOKEN is not configured"},503);
+  const supplied=request.headers.get("X-Lab-Ingest-Token")||"";
+  if(!constantTimeEqual(supplied,env.LAB_INGEST_TOKEN)) return j({ok:false,error:"Unauthorized"},401);
+  const body=await request.json().catch(()=>({}));
+  const resourceId=String(body.resource_id||"").trim();
+  const sourceSha256=String(body.source_sha256||"").trim().toLowerCase();
+  const text=String(body.text||"");
+  const pageCount=Number(body.page_count||0);
+  const suppliedTextSha=String(body.text_sha256||"").trim().toLowerCase();
+  if(!PILOT_RESOURCE_IDS.has(resourceId)) return j({ok:false,error:"Resource is not in the Financial Aid pilot allowlist"},403);
+  if(!/^[a-f0-9]{64}$/.test(sourceSha256)) return j({ok:false,error:"Valid source_sha256 is required"},400);
+  if(!Number.isInteger(pageCount)||pageCount<1||pageCount>500) return j({ok:false,error:"Valid page_count is required"},400);
+  const textBytes=new TextEncoder().encode(text);
+  if(textBytes.byteLength<100) return j({ok:false,error:"Extracted text is unexpectedly short"},400);
+  if(textBytes.byteLength>MAX_EXTRACTED_TEXT_BYTES) return j({ok:false,error:"Extracted text exceeds size limit",bytes:textBytes.byteLength},413);
+  const textSha256=await sha256Hex(textBytes);
+  if(suppliedTextSha&&suppliedTextSha!==textSha256) return j({ok:false,error:"Extracted text SHA-256 mismatch",computed:textSha256},409);
+  const manifestKey=RESOURCE_R2_PREFIX+"manifests/"+resourceId+".json";
+  const existing=await env.BUCKET.get(manifestKey);
+  if(!existing) return j({ok:false,error:"Capture the original PDF before storing extracted text"},409);
+  let manifest;
+  try{manifest=JSON.parse(await existing.text());}catch{return j({ok:false,error:"Stored resource manifest is invalid"},500);}
+  if(manifest.sha256!==sourceSha256) return j({ok:false,error:"Extracted text does not match the captured PDF hash",captured_sha256:manifest.sha256},409);
+  const textKey=RESOURCE_R2_PREFIX+"text/"+sourceSha256+".txt";
+  const extractedAt=new Date().toISOString();
+  await env.BUCKET.put(textKey,textBytes,{httpMetadata:{contentType:"text/plain; charset=utf-8",cacheControl:"private, max-age=0"},customMetadata:{resource_id:resourceId,source_sha256:sourceSha256,text_sha256:textSha256,page_count:String(pageCount),extraction_engine:"pdftotext-layout"}});
+  manifest.text_key=textKey;
+  manifest.text_sha256=textSha256;
+  manifest.text_size_bytes=textBytes.byteLength;
+  manifest.page_count=pageCount;
+  manifest.extraction={engine:"pdftotext-layout",ocr_used:false,source_sha_verified:true};
+  manifest.extracted_at=extractedAt;
+  await env.BUCKET.put(manifestKey,JSON.stringify(manifest,null,2),{httpMetadata:{contentType:"application/json; charset=utf-8",cacheControl:"private, max-age=0"}});
+  return j({ok:true,resource_id:resourceId,source_sha256:sourceSha256,text_sha256:textSha256,text_size_bytes:textBytes.byteLength,page_count:pageCount,text_key:textKey,manifest_key:manifestKey,extracted_at:extractedAt});
+}
+
 // =================== ROUTER ===================
 
 export default {
@@ -2375,6 +2413,7 @@ export default {
     if(path.startsWith("/admin/link/")&&method==="DELETE") return deleteLink(env,decodeURIComponent(path.slice(12)));
     if(path==="/content/read"&&method==="GET") return apiReaderView(env,request);
     if(path==="/admin/capture-pilot-resource"&&method==="POST") return apiCapturePilotResource(env,request);
+    if(path==="/admin/store-pilot-text"&&method==="POST") return apiStorePilotText(env,request);
     if(path==="/health") return j({ok:true,worker:WORKER_NAME,version:VERSION,max_universe_nodes:MAX_UNIVERSE_NODES,r2_resource_pilot:PILOT_RESOURCE_IDS.size});
     if(path==="/admin/setup"&&method==="POST"){
       const results=[];
