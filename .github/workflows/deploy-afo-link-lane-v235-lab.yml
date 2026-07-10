@@ -6,7 +6,7 @@ on:
       expected_version:
         description: Expected Worker VERSION value to deploy
         required: true
-        default: 2.3.18.13-financial-aid-r2-pilot
+        default: 2.3.18.13.1-financial-aid-r2-upload-fix
       confirm:
         description: Type DEPLOY to confirm this manual lab deploy
         required: true
@@ -119,23 +119,23 @@ jobs:
           while IFS='|' read -r RESOURCE_ID SOURCE_URL
           do
             [ -n "${RESOURCE_ID}" ] || continue
-            CAPTURE_JSON="$(curl -fsS -X POST "${BASE_URL}/admin/capture-pilot-resource" \
-              -H "Content-Type: application/json" \
-              -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" \
-              --data "{\"resource_id\":\"${RESOURCE_ID}\"}")"
-            echo "${CAPTURE_JSON}"
-            SOURCE_SHA="$(CAPTURE_JSON="${CAPTURE_JSON}" RESOURCE_ID="${RESOURCE_ID}" node -e "const d=JSON.parse(process.env.CAPTURE_JSON);if(!d.ok||d.resource_id!==process.env.RESOURCE_ID||!/^[a-f0-9]{64}$/.test(d.sha256))throw new Error('Invalid capture response');process.stdout.write(d.sha256);")"
             PDF_PATH="/tmp/financial-aid-pilot/${RESOURCE_ID}.pdf"
             TXT_PATH="/tmp/financial-aid-pilot/${RESOURCE_ID}.txt"
             PAYLOAD_PATH="/tmp/financial-aid-pilot/${RESOURCE_ID}.json"
-            curl -fL --retry 3 --connect-timeout 20 --max-time 180 \
+            curl -fL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 180 \
               -A 'Mozilla/5.0 (compatible; AFOLinkLaneLabExtraction/1.0)' \
               "${SOURCE_URL}" -o "${PDF_PATH}"
-            ACTUAL_SHA="$(sha256sum "${PDF_PATH}" | awk '{print $1}')"
-            if [ "${ACTUAL_SHA}" != "${SOURCE_SHA}" ]; then
-              echo "Source hash mismatch for ${RESOURCE_ID}: captured=${SOURCE_SHA} downloaded=${ACTUAL_SHA}"
+            if [ "$(head -c 5 "${PDF_PATH}")" != "%PDF-" ]; then
+              echo "Downloaded resource is not a PDF: ${RESOURCE_ID}"
               exit 1
             fi
+            ACTUAL_SHA="$(sha256sum "${PDF_PATH}" | awk '{print $1}')"
+            CAPTURE_JSON="$(curl -fsS -X POST "${BASE_URL}/admin/store-pilot-pdf?resource_id=${RESOURCE_ID}" \
+              -H "Content-Type: application/pdf" \
+              -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" \
+              --data-binary "@${PDF_PATH}")"
+            echo "${CAPTURE_JSON}"
+            SOURCE_SHA="$(CAPTURE_JSON="${CAPTURE_JSON}" RESOURCE_ID="${RESOURCE_ID}" ACTUAL_SHA="${ACTUAL_SHA}" node -e "const d=JSON.parse(process.env.CAPTURE_JSON);if(!d.ok||d.resource_id!==process.env.RESOURCE_ID||d.sha256!==process.env.ACTUAL_SHA||d.capture_method!=='authenticated-binary-upload')throw new Error('Invalid PDF storage response');process.stdout.write(d.sha256);")"
             PAGE_COUNT="$(pdfinfo "${PDF_PATH}" | awk -F: '/^Pages:/{gsub(/ /,"",$2);print $2}')"
             pdftotext -layout "${PDF_PATH}" "${TXT_PATH}"
             TEXT_SHA="$(sha256sum "${TXT_PATH}" | awk '{print $1}')"
