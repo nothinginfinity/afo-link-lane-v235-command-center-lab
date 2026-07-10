@@ -6,7 +6,7 @@ on:
       expected_version:
         description: Expected Worker VERSION value to deploy
         required: true
-        default: 2.3.18.11.2.2-galaxy-focus-reticle-navigation-fix
+        default: 2.3.18.13-financial-aid-r2-pilot
       confirm:
         description: Type DEPLOY to confirm this manual lab deploy
         required: true
@@ -60,10 +60,13 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install Wrangler
-        working-directory: apps/afo-link-lane
+      - name: Install Wrangler and PDF tools
         shell: bash
-        run: npm install
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+          cd apps/afo-link-lane
+          npm install
 
       - name: Syntax check Worker
         working-directory: apps/afo-link-lane
@@ -76,7 +79,7 @@ jobs:
         run: |
           node -e "const fs=require('fs');const expected=process.env.EXPECTED_VERSION;const src=fs.readFileSync('worker.js','utf8');const match=src.match(/const VERSION\\s*=\\s*\"([^\"]+)\"/);if(!match)throw new Error('VERSION not found');console.log('Worker VERSION='+match[1]);if(match[1]!==expected)throw new Error('Expected '+expected+' but found '+match[1]);"
 
-      - name: Optionally refresh Worker secrets
+      - name: Refresh Worker secrets
         working-directory: apps/afo-link-lane
         shell: bash
         run: |
@@ -90,6 +93,10 @@ jobs:
           else
             echo "Skipping CF_BROWSER_RENDERING_API_TOKEN secret refresh"
           fi
+          LAB_INGEST_TOKEN="$(openssl rand -hex 32)"
+          echo "::add-mask::${LAB_INGEST_TOKEN}"
+          printf '%s' "${LAB_INGEST_TOKEN}" | npx wrangler secret put LAB_INGEST_TOKEN --config wrangler.jsonc
+          echo "LAB_INGEST_TOKEN=${LAB_INGEST_TOKEN}" >> "${GITHUB_ENV}"
 
       - name: Deploy lab Worker
         working-directory: apps/afo-link-lane
@@ -101,4 +108,59 @@ jobs:
         run: |
           HEALTH_JSON="$(curl -fsS "${HEALTH_URL}")"
           echo "${HEALTH_JSON}"
-          HEALTH_JSON="${HEALTH_JSON}" node -e "const data=JSON.parse(process.env.HEALTH_JSON);const expected=process.env.EXPECTED_VERSION;if(!data.ok)throw new Error('Health check returned ok=false');if(data.worker!=='afo-link-lane-v235-lab')throw new Error('Unexpected worker '+data.worker);if(data.version!==expected)throw new Error('Expected live version '+expected+' but found '+data.version);console.log('Live version verified: '+data.version);"
+          HEALTH_JSON="${HEALTH_JSON}" node -e "const data=JSON.parse(process.env.HEALTH_JSON);const expected=process.env.EXPECTED_VERSION;if(!data.ok)throw new Error('Health check returned ok=false');if(data.worker!=='afo-link-lane-v235-lab')throw new Error('Unexpected worker '+data.worker);if(data.version!==expected)throw new Error('Expected live version '+expected+' but found '+data.version);if(data.max_universe_nodes!==5000)throw new Error('Expected max_universe_nodes=5000');if(data.r2_resource_pilot!==5)throw new Error('Expected r2_resource_pilot=5');console.log('Live version verified: '+data.version);"
+
+      - name: Capture and extract Financial Aid Toolkit PDF pilot
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_URL="${HEALTH_URL%/health}"
+          mkdir -p /tmp/financial-aid-pilot
+          while IFS='|' read -r RESOURCE_ID SOURCE_URL
+          do
+            [ -n "${RESOURCE_ID}" ] || continue
+            CAPTURE_JSON="$(curl -fsS -X POST "${BASE_URL}/admin/capture-pilot-resource" \
+              -H "Content-Type: application/json" \
+              -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" \
+              --data "{\"resource_id\":\"${RESOURCE_ID}\"}")"
+            echo "${CAPTURE_JSON}"
+            SOURCE_SHA="$(CAPTURE_JSON="${CAPTURE_JSON}" RESOURCE_ID="${RESOURCE_ID}" node -e "const d=JSON.parse(process.env.CAPTURE_JSON);if(!d.ok||d.resource_id!==process.env.RESOURCE_ID||!/^[a-f0-9]{64}$/.test(d.sha256))throw new Error('Invalid capture response');process.stdout.write(d.sha256);")"
+            PDF_PATH="/tmp/financial-aid-pilot/${RESOURCE_ID}.pdf"
+            TXT_PATH="/tmp/financial-aid-pilot/${RESOURCE_ID}.txt"
+            PAYLOAD_PATH="/tmp/financial-aid-pilot/${RESOURCE_ID}.json"
+            curl -fL --retry 3 --connect-timeout 20 --max-time 180 \
+              -A 'Mozilla/5.0 (compatible; AFOLinkLaneLabExtraction/1.0)' \
+              "${SOURCE_URL}" -o "${PDF_PATH}"
+            ACTUAL_SHA="$(sha256sum "${PDF_PATH}" | awk '{print $1}')"
+            if [ "${ACTUAL_SHA}" != "${SOURCE_SHA}" ]; then
+              echo "Source hash mismatch for ${RESOURCE_ID}: captured=${SOURCE_SHA} downloaded=${ACTUAL_SHA}"
+              exit 1
+            fi
+            PAGE_COUNT="$(pdfinfo "${PDF_PATH}" | awk -F: '/^Pages:/{gsub(/ /,"",$2);print $2}')"
+            pdftotext -layout "${PDF_PATH}" "${TXT_PATH}"
+            TEXT_SHA="$(sha256sum "${TXT_PATH}" | awk '{print $1}')"
+            RESOURCE_ID="${RESOURCE_ID}" SOURCE_SHA="${SOURCE_SHA}" TEXT_SHA="${TEXT_SHA}" PAGE_COUNT="${PAGE_COUNT}" TXT_PATH="${TXT_PATH}" PAYLOAD_PATH="${PAYLOAD_PATH}" python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          payload = {
+              "resource_id": os.environ["RESOURCE_ID"],
+              "source_sha256": os.environ["SOURCE_SHA"],
+              "text_sha256": os.environ["TEXT_SHA"],
+              "page_count": int(os.environ["PAGE_COUNT"]),
+              "text": Path(os.environ["TXT_PATH"]).read_text(encoding="utf-8"),
+          }
+          Path(os.environ["PAYLOAD_PATH"]).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+          PY
+            TEXT_JSON="$(curl -fsS -X POST "${BASE_URL}/admin/store-pilot-text" \
+              -H "Content-Type: application/json" \
+              -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" \
+              --data-binary "@${PAYLOAD_PATH}")"
+            echo "${TEXT_JSON}"
+            TEXT_JSON="${TEXT_JSON}" RESOURCE_ID="${RESOURCE_ID}" SOURCE_SHA="${SOURCE_SHA}" TEXT_SHA="${TEXT_SHA}" PAGE_COUNT="${PAGE_COUNT}" node -e "const d=JSON.parse(process.env.TEXT_JSON);if(!d.ok||d.resource_id!==process.env.RESOURCE_ID||d.source_sha256!==process.env.SOURCE_SHA||d.text_sha256!==process.env.TEXT_SHA||d.page_count!==Number(process.env.PAGE_COUNT))throw new Error('Invalid text storage response');console.log('Stored '+d.resource_id+' -> '+d.text_key);"
+          done <<'EOF'
+          fat-do-you-need-money-pdf|https://studentaid.gov/sites/default/files/do-you-need-money.pdf
+          fat-money-management-checklist-pdf|https://studentaid.gov/sites/default/files/money-management-checklist.pdf
+          fat-pslf-infographic-pdf|https://studentaid.gov/sites/default/files/pslf-infographic.pdf
+          fat-how-financial-aid-works-graphic|https://studentaid.gov/sites/default/files/how-financial-aid-works.pdf
+          fat-federal-student-loan-graphic|https://studentaid.gov/sites/default/files/get-loan.pdf
+          EOF
