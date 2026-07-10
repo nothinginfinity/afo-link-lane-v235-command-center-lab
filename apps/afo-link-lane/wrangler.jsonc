@@ -10,7 +10,8 @@
     {
       "binding": "DB",
       "database_name": "afo-link-lane-v235-lab-db",
-      "database_id": "00b999a1-d637-45ee-9720-f90411cabb65"
+      "database_id": "00b999a1-d637-45ee-9720-f90411cabb65",
+      "migrations_dir": "migrations"
     }
   ],
   "r2_buckets": [
@@ -18,5 +19,14 @@
       "binding": "BUCKET",
       "bucket_name": "afo-link-lane-v235-lab-content"
     }
-  ]
+  ],
+  "vectorize": [
+    {
+      "binding": "RESOURCE_VECTORS",
+      "index_name": "afo-link-lane-v235-lab-resources-v1"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  }
 }
