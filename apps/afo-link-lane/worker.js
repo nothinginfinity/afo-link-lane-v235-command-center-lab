@@ -1,4 +1,4 @@
-const VERSION = "2.3.18.12-financial-aid-file-nodes";
+const VERSION = "2.3.18.13-financial-aid-r2-pilot";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -13,7 +13,16 @@ const SCHEMA = [
 ];
 
 const R_GALAXY = 1500;
-const MAX_UNIVERSE_NODES = 2500;
+const MAX_UNIVERSE_NODES = 5000;
+const RESOURCE_R2_PREFIX = "resources/financial-aid-toolkit/";
+const MAX_RESOURCE_BYTES = 15 * 1024 * 1024;
+const PILOT_RESOURCE_IDS = new Set([
+  "fat-do-you-need-money-pdf",
+  "fat-money-management-checklist-pdf",
+  "fat-pslf-infographic-pdf",
+  "fat-how-financial-aid-works-graphic",
+  "fat-federal-student-loan-graphic"
+]);
 
 const DEFAULT_FEED_SOURCES = [
   {id:"feed-cloudflare-blog",feed_url:"https://blog.cloudflare.com/rss/",name:"Cloudflare Blog",max_items:35},
@@ -100,6 +109,17 @@ const DEFAULT_FEED_SOURCES = [
 function j(v,s=200){return Response.json(v,{status:s,headers:CORS});}
 function uid(){return Math.random().toString(36).slice(2,9)+Date.now().toString(36);}
 function safe(v){return String(v||"").replace(/[<>"']/g,"");}
+function constantTimeEqual(a,b){
+  a=String(a||"");b=String(b||"");
+  let diff=a.length^b.length;
+  const n=Math.max(a.length,b.length);
+  for(let i=0;i<n;i++) diff|=(a.charCodeAt(i)||0)^(b.charCodeAt(i)||0);
+  return diff===0;
+}
+async function sha256Hex(buf){
+  const digest=await crypto.subtle.digest("SHA-256",buf);
+  return Array.from(new Uint8Array(digest)).map(function(v){return v.toString(16).padStart(2,"0");}).join("");
+}
 
 function fibPoint(i,n,radius){
   if(n<=1) return {x:0,y:0,z:radius};
@@ -2294,6 +2314,42 @@ async function deleteLink(env,id){
   return j({ok:true});
 }
 
+async function apiCapturePilotResource(env,request){
+  if(!env.LAB_INGEST_TOKEN) return j({ok:false,error:"LAB_INGEST_TOKEN is not configured"},503);
+  const supplied=request.headers.get("X-Lab-Ingest-Token")||"";
+  if(!constantTimeEqual(supplied,env.LAB_INGEST_TOKEN)) return j({ok:false,error:"Unauthorized"},401);
+  const body=await request.json().catch(()=>({}));
+  const resourceId=String(body.resource_id||"").trim();
+  if(!PILOT_RESOURCE_IDS.has(resourceId)) return j({ok:false,error:"Resource is not in the Financial Aid pilot allowlist"},403);
+  const row=await env.DB.prepare("SELECT id,url,title,description,domain,group_name FROM links WHERE id=?").bind(resourceId).first();
+  if(!row) return j({ok:false,error:"Resource node not found"},404);
+  if(row.group_name!=="Financial Aid Toolkit"||row.domain!=="studentaid.gov") return j({ok:false,error:"Resource node failed group/domain policy"},403);
+  let source;
+  try{source=new URL(row.url);}catch{return j({ok:false,error:"Stored source URL is invalid"},400);}
+  if(source.protocol!=="https:"||source.hostname!=="studentaid.gov"||!source.pathname.toLowerCase().endsWith(".pdf")) return j({ok:false,error:"Only official studentaid.gov PDF sources are allowed"},403);
+  const fetched=await fetch(source.toString(),{headers:{"User-Agent":"Mozilla/5.0 (compatible; AFOLinkLaneLabResourceCapture/1.0)","Accept":"application/pdf"},redirect:"follow"});
+  if(!fetched.ok) return j({ok:false,error:"Source fetch failed",status:fetched.status},502);
+  let finalSource;
+  try{finalSource=new URL(fetched.url||source.toString());}catch{return j({ok:false,error:"Source redirect URL is invalid"},502);}
+  if(finalSource.protocol!=="https:"||finalSource.hostname!=="studentaid.gov"||!finalSource.pathname.toLowerCase().endsWith(".pdf")) return j({ok:false,error:"Source redirected outside the official PDF allowlist"},403);
+  const declared=Number(fetched.headers.get("content-length")||0);
+  if(declared>MAX_RESOURCE_BYTES) return j({ok:false,error:"Resource exceeds capture size limit",declared_bytes:declared},413);
+  const buf=await fetched.arrayBuffer();
+  if(buf.byteLength>MAX_RESOURCE_BYTES) return j({ok:false,error:"Resource exceeds capture size limit",bytes:buf.byteLength},413);
+  const sig=String.fromCharCode.apply(null,new Uint8Array(buf.slice(0,5)));
+  if(sig!=="%PDF-") return j({ok:false,error:"Fetched resource is not a PDF"},415);
+  const sha256=await sha256Hex(buf);
+  const originalKey=RESOURCE_R2_PREFIX+"original/"+sha256+".pdf";
+  const manifestKey=RESOURCE_R2_PREFIX+"manifests/"+resourceId+".json";
+  let existingManifest=null;
+  try{const existing=await env.BUCKET.get(manifestKey);if(existing)existingManifest=JSON.parse(await existing.text());}catch(e){}
+  const capturedAt=new Date().toISOString();
+  await env.BUCKET.put(originalKey,buf,{httpMetadata:{contentType:"application/pdf",cacheControl:"private, max-age=0"},customMetadata:{resource_id:resourceId,group_name:row.group_name,domain:row.domain,sha256:sha256}});
+  const manifest={schema_version:1,resource_id:resourceId,title:row.title,description:row.description,group_name:row.group_name,domain:row.domain,source_url:row.url,final_source_url:finalSource.toString(),resource_type:"pdf",sha256:sha256,size_bytes:buf.byteLength,content_type:"application/pdf",original_key:originalKey,text_key:existingManifest&&existingManifest.sha256===sha256?existingManifest.text_key||null:null,text_sha256:existingManifest&&existingManifest.sha256===sha256?existingManifest.text_sha256||null:null,page_count:existingManifest&&existingManifest.sha256===sha256?existingManifest.page_count||null:null,extraction:existingManifest&&existingManifest.sha256===sha256?existingManifest.extraction||null:null,captured_at:capturedAt};
+  await env.BUCKET.put(manifestKey,JSON.stringify(manifest,null,2),{httpMetadata:{contentType:"application/json; charset=utf-8",cacheControl:"private, max-age=0"}});
+  return j({ok:true,resource_id:resourceId,sha256:sha256,size_bytes:buf.byteLength,original_key:originalKey,manifest_key:manifestKey,text_key:manifest.text_key,captured_at:capturedAt});
+}
+
 // =================== ROUTER ===================
 
 export default {
@@ -2318,7 +2374,8 @@ export default {
     if(path==="/api/feed-sources"&&method==="GET") return apiFeedSources(env);
     if(path.startsWith("/admin/link/")&&method==="DELETE") return deleteLink(env,decodeURIComponent(path.slice(12)));
     if(path==="/content/read"&&method==="GET") return apiReaderView(env,request);
-    if(path==="/health") return j({ok:true,worker:WORKER_NAME,version:VERSION});
+    if(path==="/admin/capture-pilot-resource"&&method==="POST") return apiCapturePilotResource(env,request);
+    if(path==="/health") return j({ok:true,worker:WORKER_NAME,version:VERSION,max_universe_nodes:MAX_UNIVERSE_NODES,r2_resource_pilot:PILOT_RESOURCE_IDS.size});
     if(path==="/admin/setup"&&method==="POST"){
       const results=[];
       for(const sql of SCHEMA){try{await env.DB.prepare(sql).run();results.push({ok:true});}catch(e){results.push({ok:false,error:e.message});}}
