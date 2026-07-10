@@ -23,7 +23,7 @@ jobs:
   deploy:
     name: Manual lab Worker deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     env:
       EXPECTED_VERSION: ${{ inputs.expected_version }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
