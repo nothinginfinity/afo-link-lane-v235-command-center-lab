@@ -6,6 +6,15 @@
   "triggers": {
     "crons": ["17 */4 * * *"]
   },
+  "ai": {
+    "binding": "AI"
+  },
+  "vectorize": [
+    {
+      "binding": "RESOURCE_VECTORS",
+      "index_name": "afo-link-lane-v235-lab-resources-v1"
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
@@ -19,14 +28,5 @@
       "binding": "BUCKET",
       "bucket_name": "afo-link-lane-v235-lab-content"
     }
-  ],
-  "vectorize": [
-    {
-      "binding": "RESOURCE_VECTORS",
-      "index_name": "afo-link-lane-v235-lab-resources-v1"
-    }
-  ],
-  "ai": {
-    "binding": "AI"
-  }
+  ]
 }
