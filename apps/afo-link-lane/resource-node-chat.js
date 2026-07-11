@@ -142,7 +142,7 @@ function buildPrompt(question, turns, evidence) {
 }
 
 async function generateGroundedAnswer(env, question, turns, evidence) {
-  if (!env.AI) return null;
+  if (!env.AI) return { answer: null, debug: { stage: "no_ai_binding" } };
   const { system, user } = buildPrompt(question, turns, evidence);
   let result;
   try {
@@ -151,13 +151,13 @@ async function generateGroundedAnswer(env, question, turns, evidence) {
       response_format: { type: "json_object" },
       max_completion_tokens: 8000
     });
-  } catch { return null; }
+  } catch (e) { return { answer: null, debug: { stage: "ai_run_threw", message: String(e && e.message || e).slice(0, 300) } }; }
   const raw = result && (result.response ?? result.result ?? result);
   const content = typeof raw === "string" ? raw : (raw && raw.content) || null;
-  if (!content) return null;
+  if (!content) return { answer: null, debug: { stage: "no_content", result_keys: result && typeof result === "object" ? Object.keys(result) : typeof result, result_preview: JSON.stringify(result).slice(0, 400) } };
   let parsed;
-  try { parsed = JSON.parse(content); } catch { return null; }
-  if (!parsed || typeof parsed !== "object" || typeof parsed.text !== "string") return null;
+  try { parsed = JSON.parse(content); } catch (e) { return { answer: null, debug: { stage: "json_parse_failed", content_preview: String(content).slice(0, 400) } }; }
+  if (!parsed || typeof parsed !== "object" || typeof parsed.text !== "string") return { answer: null, debug: { stage: "unexpected_shape", parsed_preview: JSON.stringify(parsed).slice(0, 300) } };
   const validChunkIndexes = new Set(evidence.map(item => item.chunk_index));
   const citedRaw = Array.isArray(parsed.cited_chunk_indexes) ? parsed.cited_chunk_indexes : [];
   const cited = citedRaw.filter(index => validChunkIndexes.has(Number(index))).map(Number);
@@ -165,19 +165,22 @@ async function generateGroundedAnswer(env, question, turns, evidence) {
   // Groundedness guard: a "direct" answer must cite at least one real chunk
   // from THIS turn's evidence, or it is rejected outright (never surfaced),
   // and the caller falls back to the extractive answer instead.
-  if (direct && !cited.length) return null;
+  if (direct && !cited.length) return { answer: null, debug: { stage: "direct_without_valid_citation", cited_raw: citedRaw } };
   const citations = cited.map(index => {
     const item = evidence.find(e => e.chunk_index === index);
     return item ? item.citation : null;
   }).filter(Boolean);
   return {
-    direct,
-    kind: "synthesis",
-    mode: CHAT_MODE,
-    text: String(parsed.text).slice(0, 2000),
-    citations,
-    cited_chunk_indexes: cited,
-    resource_id: evidence[0]?.resource_id || null
+    answer: {
+      direct,
+      kind: "synthesis",
+      mode: CHAT_MODE,
+      text: String(parsed.text).slice(0, 2000),
+      citations,
+      cited_chunk_indexes: cited,
+      resource_id: evidence[0]?.resource_id || null
+    },
+    debug: null
   };
 }
 
@@ -237,11 +240,17 @@ async function apiNodeChatTurn(env, request) {
   if (evidence.some(item => !item || item.resource_id !== resourceId)) return browserJson({ ok: false, error: "Cross-node evidence rejected" }, 502);
 
   let answer;
+  let generationDebug = null;
   if (!evidence.length) {
     answer = { direct: false, kind: "extractive", mode: ANSWER_MODE, text: "No evidence was found in this node for that question.", citations: [], cited_chunk_indexes: [], resource_id: resourceId };
   } else {
-    answer = await generateGroundedAnswer(env, question, shapeCheck.turns, evidence);
-    if (!answer) answer = extractiveFallback(payload);
+    const generated = await generateGroundedAnswer(env, question, shapeCheck.turns, evidence);
+    if (generated && generated.answer) {
+      answer = generated.answer;
+    } else {
+      generationDebug = generated ? generated.debug : { stage: "unknown" };
+      answer = extractiveFallback(payload);
+    }
   }
   if (answer.resource_id && answer.resource_id !== resourceId) return browserJson({ ok: false, error: "Node-local answer integrity check failed" }, 502);
 
@@ -257,6 +266,7 @@ async function apiNodeChatTurn(env, request) {
     ranking_version: RANKING_VERSION,
     chat_mode: CHAT_MODE,
     answer,
+    generation_debug: generationDebug,
     evidence,
     turns,
     count: evidence.length
