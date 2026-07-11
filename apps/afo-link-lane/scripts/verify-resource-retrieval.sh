@@ -135,9 +135,10 @@ fat-money-management-checklist-pdf|How many qualifying payments are required for
 fat-do-you-need-money-pdf|How many qualifying payments are required for Public Service Loan Forgiveness?|866bb8ed3b0202a86652f51c4ff461bfff3c4561d8397b7583e2914005e9328a|do-you-need-money.pdf|a94826164435a3266f35bcfbeda24e0aaaeb5fa8db1bbd9867bd34f67153752a
 EOF
 
-ROOT_HTML="$(curl --fail-with-body -sS "${BASE_URL}/")"
-ROOT_HTML="${ROOT_HTML}" node - <<'NODE'
-const html=process.env.ROOT_HTML||''
+curl --fail-with-body -sS "${BASE_URL}/" -o /tmp/link-lane-root.html
+node - <<'NODE'
+const fs=require('fs')
+const html=fs.readFileSync('/tmp/link-lane-root.html','utf8')
 for(const marker of ['cvQuestion','Search This Node','cvEvidenceCard','/api/resource-retrieval/query','NODE-LOCAL RETRIEVAL']){
   if(!html.includes(marker))throw new Error('Missing browser UI marker '+marker)
 }
@@ -147,9 +148,9 @@ for(const forbidden of ['LAB_INGEST_TOKEN','X-Lab-Ingest-Token','/admin/query-pi
 console.log('Browser Content Visor retrieval UI markers verified with no ingest-token/admin-route exposure')
 NODE
 
-ROOT_HTML="${ROOT_HTML}" node - <<'NODE'
+node - <<'NODE'
 const fs=require('fs')
-const html=process.env.ROOT_HTML||''
+const html=fs.readFileSync('/tmp/link-lane-root.html','utf8')
 const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].map(match=>match[1])
 const browser=scripts.find(script=>script.includes('CV_PILOT_RESOURCE_IDS')&&script.includes('cvSubmitResourceQuestion'))
 if(!browser)throw new Error('Generated Link Lane browser script was not found')
