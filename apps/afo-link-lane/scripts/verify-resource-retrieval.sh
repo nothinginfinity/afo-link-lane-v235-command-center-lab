@@ -105,3 +105,32 @@ fat-pslf-infographic-pdf|How many qualifying payments are required for Public Se
 fat-how-financial-aid-works-graphic|How does a school determine a student's financial aid offer?
 fat-federal-student-loan-graphic|What should a borrower understand before accepting a federal student loan?
 EOF
+
+while IFS='|' read -r RESOURCE_ID QUESTION EXPECTED_SOURCE_SHA EXPECTED_URL_TOKEN FORBIDDEN_SOURCE_SHA
+do
+  [ -n "${RESOURCE_ID}" ] || continue
+  PAYLOAD="$(RESOURCE_ID="${RESOURCE_ID}" QUESTION="${QUESTION}" node -e "process.stdout.write(JSON.stringify({resource_id:process.env.RESOURCE_ID,question:process.env.QUESTION,top_k:8}))")"
+  NEGATIVE_JSON="$(curl --fail-with-body -sS --max-time 120 -X POST "${BASE_URL}/admin/query-pilot-resource" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data-binary "${PAYLOAD}")"
+  echo "Wrong-node isolation query for ${RESOURCE_ID}: ${NEGATIVE_JSON}"
+  NEGATIVE_JSON="${NEGATIVE_JSON}" RESOURCE_ID="${RESOURCE_ID}" EXPECTED_SOURCE_SHA="${EXPECTED_SOURCE_SHA}" EXPECTED_URL_TOKEN="${EXPECTED_URL_TOKEN}" FORBIDDEN_SOURCE_SHA="${FORBIDDEN_SOURCE_SHA}" node - <<'NODE'
+const data=JSON.parse(process.env.NEGATIVE_JSON)
+const target=process.env.RESOURCE_ID
+const expectedSha=process.env.EXPECTED_SOURCE_SHA
+const expectedUrlToken=process.env.EXPECTED_URL_TOKEN
+const forbiddenSha=process.env.FORBIDDEN_SOURCE_SHA
+if(!data.ok||data.resource_id!==target)throw new Error('Wrong-node isolation query failed for '+target)
+if(data.source_sha256!==expectedSha)throw new Error('Wrong-node query escaped the opened resource source hash')
+if(!(data.count>0)||!Array.isArray(data.evidence)||!data.evidence.length)throw new Error('Wrong-node query returned no local evidence')
+for(const item of data.evidence){
+  if(item.resource_id!==target)throw new Error('Sibling resource_id leaked into wrong-node query')
+  if(!String(item.chunk_key||'').includes('/'+expectedSha+'/'))throw new Error('Evidence chunk key escaped the opened resource source hash')
+  if(String(item.chunk_key||'').includes('/'+forbiddenSha+'/'))throw new Error('PSLF sibling chunk leaked into non-PSLF node')
+  if(!String(item.source_url||'').includes(expectedUrlToken))throw new Error('Evidence source URL escaped the opened node')
+  if(!Number.isFinite(Number(item.score))||!item.chunk_sha256||!item.citation||!item.text)throw new Error('Wrong-node evidence provenance incomplete')
+}
+console.log('Explicit wrong-node isolation verified for '+target+' with '+data.count+' local evidence chunks')
+NODE
+done <<'EOF'
+fat-money-management-checklist-pdf|How many qualifying payments are required for Public Service Loan Forgiveness?|971976a17e564319c53bf909ff180f31b3be6dcfdbea1b8fb966dc7b64074cae|money-management-checklist.pdf|a94826164435a3266f35bcfbeda24e0aaaeb5fa8db1bbd9867bd34f67153752a
+fat-do-you-need-money-pdf|How many qualifying payments are required for Public Service Loan Forgiveness?|866bb8ed3b0202a86652f51c4ff461bfff3c4561d8397b7583e2914005e9328a|do-you-need-money.pdf|a94826164435a3266f35bcfbeda24e0aaaeb5fa8db1bbd9867bd34f67153752a
+EOF
