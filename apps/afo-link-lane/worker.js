@@ -1,4 +1,4 @@
-import { RESOURCE_RETRIEVAL, apiIndexPilotChunks, apiQueryPilotResource } from "./resource-retrieval.js";
+import { apiIndexPilotResources, apiQueryPilotResource, apiPilotRetrievalStatus, VECTOR_INDEX_NAME } from "./resource-retrieval.js";
 
 const VERSION = "2.3.18.14-resource-vector-retrieval";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
@@ -2448,9 +2448,10 @@ export default {
     if(path==="/admin/capture-pilot-resource"&&method==="POST") return apiCapturePilotResource(env,request);
     if(path==="/admin/store-pilot-pdf"&&method==="POST") return apiStorePilotPdf(env,request);
     if(path==="/admin/store-pilot-text"&&method==="POST") return apiStorePilotText(env,request);
-    if(path==="/admin/index-pilot-chunks"&&method==="POST") return apiIndexPilotChunks(env,request);
+    if(path==="/admin/index-pilot-resources"&&method==="POST") return apiIndexPilotResources(env,request);
     if(path==="/admin/query-pilot-resource"&&method==="POST") return apiQueryPilotResource(env,request);
-    if(path==="/health") return j({ok:true,worker:WORKER_NAME,version:VERSION,max_universe_nodes:MAX_UNIVERSE_NODES,r2_resource_pilot:PILOT_RESOURCE_IDS.size,resource_retrieval:{index_name:RESOURCE_RETRIEVAL.indexName,namespace:RESOURCE_RETRIEVAL.namespace,embedding_model:RESOURCE_RETRIEVAL.model,embedding_pooling:RESOURCE_RETRIEVAL.pooling,embedding_dimensions:RESOURCE_RETRIEVAL.dimensions,ai_binding:Boolean(env.AI),vector_binding:Boolean(env.RESOURCE_VECTORS)}});
+    if(path==="/admin/pilot-retrieval-status"&&method==="GET") return apiPilotRetrievalStatus(env,request);
+    if(path==="/health") return j({ok:true,worker:WORKER_NAME,version:VERSION,max_universe_nodes:MAX_UNIVERSE_NODES,r2_resource_pilot:PILOT_RESOURCE_IDS.size,resource_retrieval:{index_name:VECTOR_INDEX_NAME,namespace:"financial-aid-toolkit",embedding_model:"@cf/baai/bge-base-en-v1.5",embedding_pooling:"cls",embedding_dimensions:768,ai_binding:Boolean(env.AI),vector_binding:Boolean(env.RESOURCE_VECTORS)}});
     if(path==="/admin/setup"&&method==="POST"){
       const results=[];
       for(const sql of SCHEMA){try{await env.DB.prepare(sql).run();results.push({ok:true});}catch(e){results.push({ok:false,error:e.message});}}
