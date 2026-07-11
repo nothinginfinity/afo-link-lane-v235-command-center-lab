@@ -61,8 +61,31 @@ while IFS='|' read -r RESOURCE_ID QUESTION
 do
   [ -n "${RESOURCE_ID}" ] || continue
   PAYLOAD="$(RESOURCE_ID="${RESOURCE_ID}" QUESTION="${QUESTION}" node -e "process.stdout.write(JSON.stringify({resource_id:process.env.RESOURCE_ID,question:process.env.QUESTION,top_k:8}))")"
-  QUERY_JSON="$(curl --fail-with-body -sS --max-time 120 -X POST "${BASE_URL}/admin/query-pilot-resource" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data-binary "${PAYLOAD}")"
-  echo "${QUERY_JSON}"
+  QUERY_OK=0
+  QUERY_JSON=''
+  for ATTEMPT in $(seq 1 30)
+  do
+    HTTP_CODE="$(curl -sS --max-time 120 -o /tmp/query-response.json -w '%{http_code}' -X POST "${BASE_URL}/admin/query-pilot-resource" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data-binary "${PAYLOAD}")"
+    QUERY_JSON="$(cat /tmp/query-response.json)"
+    echo "Query attempt ${ATTEMPT} for ${RESOURCE_ID} returned HTTP ${HTTP_CODE}: ${QUERY_JSON}"
+    if HTTP_CODE="${HTTP_CODE}" QUERY_JSON="${QUERY_JSON}" RESOURCE_ID="${RESOURCE_ID}" node - <<'NODE'
+const code=Number(process.env.HTTP_CODE)
+let data
+try{data=JSON.parse(process.env.QUERY_JSON)}catch{process.exit(1)}
+if(code!==200||!data.ok||data.resource_id!==process.env.RESOURCE_ID)process.exit(1)
+if(!(data.count>0)||!Array.isArray(data.evidence)||!data.evidence.length)process.exit(1)
+process.exit(0)
+NODE
+    then
+      QUERY_OK=1
+      break
+    fi
+    sleep 3
+  done
+  if [ "${QUERY_OK}" != "1" ]; then
+    echo "Vectorize query never became visible for ${RESOURCE_ID}"
+    exit 1
+  fi
   QUERY_JSON="${QUERY_JSON}" RESOURCE_ID="${RESOURCE_ID}" node - <<'NODE'
 const data=JSON.parse(process.env.QUERY_JSON)
 if(!data.ok||data.resource_id!==process.env.RESOURCE_ID)throw new Error('Node-local query failed')
