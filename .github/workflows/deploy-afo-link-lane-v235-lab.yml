@@ -6,7 +6,7 @@ on:
       expected_version:
         description: Expected Worker VERSION value to deploy
         required: true
-        default: 2.3.18.15-node-local-retrieval-ui
+        default: 2.3.18.16-node-local-answer-quality
       confirm:
         description: Type DEPLOY to confirm this manual lab deploy
         required: true
@@ -23,7 +23,7 @@ jobs:
   deploy:
     name: Manual lab Worker deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       EXPECTED_VERSION: ${{ inputs.expected_version }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -76,7 +76,10 @@ jobs:
         run: |
           node --check worker.js
           node --check resource-retrieval.js
-          node -e "import('./resource-retrieval.js').then(m=>{for(const k of ['apiIndexPilotResources','apiQueryPilotResource','apiBrowserQueryPilotResource','apiPilotRetrievalStatus','VECTOR_INDEX_NAME'])if(!(k in m))throw new Error('Missing export '+k);console.log('Retrieval module exports verified')})"
+          node --check resource-retrieval-quality.js
+          bash -n scripts/rebuild-financial-aid-quality.sh
+          bash -n scripts/verify-resource-retrieval.sh
+          node -e "import('./resource-retrieval-quality.js').then(m=>{for(const k of ['apiIndexPilotResources','apiQueryPilotResource','apiBrowserQueryPilotResource','apiPilotRetrievalStatus','VECTOR_INDEX_NAME','RANKING_VERSION','ANSWER_MODE'])if(!(k in m))throw new Error('Missing export '+k);if(m.RANKING_VERSION!=='hybrid-vector-lexical-v1'||m.ANSWER_MODE!=='extractive-evidence-v1')throw new Error('Unexpected quality module metadata');console.log('Retrieval quality module exports verified')})"
 
       - name: Assert Worker version
         working-directory: apps/afo-link-lane
@@ -125,7 +128,7 @@ jobs:
             cat /tmp/public-health.txt || true
             if [ "${HTTP_CODE}" = "200" ]; then
               HEALTH_JSON="$(cat /tmp/public-health.txt)"
-              if HEALTH_JSON="${HEALTH_JSON}" node -e "const data=JSON.parse(process.env.HEALTH_JSON);if(data.version!==process.env.EXPECTED_VERSION)throw new Error('Unexpected public live version '+data.version);if(data.resource_retrieval?.browser_route!=='/api/resource-retrieval/query'||data.resource_retrieval?.browser_allowlist_size!==5)throw new Error('Browser retrieval health metadata missing');console.log('Public live version and browser route verified: '+data.version);"; then
+              if HEALTH_JSON="${HEALTH_JSON}" node -e "const data=JSON.parse(process.env.HEALTH_JSON);if(data.version!==process.env.EXPECTED_VERSION)throw new Error('Unexpected public live version '+data.version);if(data.resource_retrieval?.browser_route!=='/api/resource-retrieval/query'||data.resource_retrieval?.browser_allowlist_size!==5)throw new Error('Browser retrieval health metadata missing');if(data.resource_retrieval?.chunker_version!=='pdf-page-v2-reading-order'||data.resource_retrieval?.normalizer!=='pdf-reading-order-v2'||data.resource_retrieval?.ranking_version!=='hybrid-vector-lexical-v1'||data.resource_retrieval?.answer_mode!=='extractive-evidence-v1')throw new Error('Public answer-quality metadata missing');console.log('Public live version, browser route, and answer quality verified: '+data.version);"; then
                 READY=1
                 break
               fi
@@ -193,7 +196,14 @@ jobs:
           fat-federal-student-loan-graphic|https://studentaid.gov/sites/default/files/get-loan.pdf
           EOF
 
-      - name: Verify five-resource node-local retrieval
+      - name: Rebuild five pilot resources in reading order
+        working-directory: apps/afo-link-lane
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/rebuild-financial-aid-quality.sh
+
+      - name: Verify five-resource node-local answer quality
         working-directory: apps/afo-link-lane
         shell: bash
         run: |
@@ -226,7 +236,7 @@ jobs:
           echo "Wrangler remote runtime log tail:"
           tail -n 80 /tmp/wrangler-remote.log || true
 
-      - name: Verify public live UI and browser-safe node-local retrieval
+      - name: Verify public live UI and browser-safe node-local answer quality
         working-directory: apps/afo-link-lane
         shell: bash
         run: |
