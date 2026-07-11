@@ -134,3 +134,110 @@ done <<'EOF'
 fat-money-management-checklist-pdf|How many qualifying payments are required for Public Service Loan Forgiveness?|971976a17e564319c53bf909ff180f31b3be6dcfdbea1b8fb966dc7b64074cae|money-management-checklist.pdf|a94826164435a3266f35bcfbeda24e0aaaeb5fa8db1bbd9867bd34f67153752a
 fat-do-you-need-money-pdf|How many qualifying payments are required for Public Service Loan Forgiveness?|866bb8ed3b0202a86652f51c4ff461bfff3c4561d8397b7583e2914005e9328a|do-you-need-money.pdf|a94826164435a3266f35bcfbeda24e0aaaeb5fa8db1bbd9867bd34f67153752a
 EOF
+
+ROOT_HTML="$(curl --fail-with-body -sS "${BASE_URL}/")"
+ROOT_HTML="${ROOT_HTML}" node - <<'NODE'
+const html=process.env.ROOT_HTML||''
+for(const marker of ['cvQuestion','Search This Node','cvEvidenceCard','/api/resource-retrieval/query','NODE-LOCAL RETRIEVAL']){
+  if(!html.includes(marker))throw new Error('Missing browser UI marker '+marker)
+}
+for(const forbidden of ['LAB_INGEST_TOKEN','X-Lab-Ingest-Token','/admin/query-pilot-resource']){
+  if(html.includes(forbidden))throw new Error('Secret/admin retrieval marker reached browser HTML: '+forbidden)
+}
+console.log('Browser Content Visor retrieval UI markers verified with no ingest-token/admin-route exposure')
+NODE
+
+GET_CODE="$(curl -sS -o /tmp/browser-get.json -w '%{http_code}' "${BASE_URL}/api/resource-retrieval/query")"
+GET_CODE="${GET_CODE}" GET_JSON="$(cat /tmp/browser-get.json)" node - <<'NODE'
+const data=JSON.parse(process.env.GET_JSON)
+if(Number(process.env.GET_CODE)!==405||data.ok!==false)throw new Error('Browser route did not reject GET with 405')
+console.log('Browser route POST-only behavior verified')
+NODE
+
+TYPE_CODE="$(curl -sS -o /tmp/browser-type.json -w '%{http_code}' -X POST "${BASE_URL}/api/resource-retrieval/query" -H 'Content-Type: text/plain' --data-binary '{}')"
+TYPE_CODE="${TYPE_CODE}" TYPE_JSON="$(cat /tmp/browser-type.json)" node - <<'NODE'
+const data=JSON.parse(process.env.TYPE_JSON)
+if(Number(process.env.TYPE_CODE)!==415||data.ok!==false)throw new Error('Browser route accepted non-JSON content')
+console.log('Browser route JSON-only behavior verified')
+NODE
+
+ORIGIN_CODE="$(curl -sS -o /tmp/browser-origin.json -w '%{http_code}' -X POST "${BASE_URL}/api/resource-retrieval/query" -H 'Content-Type: application/json' -H 'Origin: https://example.invalid' --data-binary '{"resource_id":"fat-pslf-infographic-pdf","question":"How many qualifying payments are required?"}')"
+ORIGIN_CODE="${ORIGIN_CODE}" ORIGIN_JSON="$(cat /tmp/browser-origin.json)" node - <<'NODE'
+const data=JSON.parse(process.env.ORIGIN_JSON)
+if(Number(process.env.ORIGIN_CODE)!==403||data.ok!==false)throw new Error('Browser route accepted a cross-origin request')
+console.log('Browser route cross-origin rejection verified')
+NODE
+
+ARBITRARY_CODE="$(curl -sS -o /tmp/browser-arbitrary.json -w '%{http_code}' -X POST "${BASE_URL}/api/resource-retrieval/query" -H 'Content-Type: application/json' --data-binary '{"resource_id":"not-an-approved-node","question":"What does this say?"}')"
+ARBITRARY_CODE="${ARBITRARY_CODE}" ARBITRARY_JSON="$(cat /tmp/browser-arbitrary.json)" node - <<'NODE'
+const data=JSON.parse(process.env.ARBITRARY_JSON)
+if(Number(process.env.ARBITRARY_CODE)!==403||data.ok!==false)throw new Error('Browser route accepted an arbitrary resource ID')
+console.log('Browser route pilot allowlist verified')
+NODE
+
+EXTRA_CODE="$(curl -sS -o /tmp/browser-extra.json -w '%{http_code}' -X POST "${BASE_URL}/api/resource-retrieval/query" -H 'Content-Type: application/json' --data-binary '{"resource_id":"fat-pslf-infographic-pdf","question":"How many qualifying payments are required?","top_k":20}')"
+EXTRA_CODE="${EXTRA_CODE}" EXTRA_JSON="$(cat /tmp/browser-extra.json)" node - <<'NODE'
+const data=JSON.parse(process.env.EXTRA_JSON)
+if(Number(process.env.EXTRA_CODE)!==400||data.ok!==false)throw new Error('Browser route accepted extra request fields')
+console.log('Browser route fixed request shape verified')
+NODE
+
+browser_query(){
+  local resource_id="$1"
+  local question="$2"
+  local output="$3"
+  RESOURCE_ID="${resource_id}" QUESTION="${question}" node -e "process.stdout.write(JSON.stringify({resource_id:process.env.RESOURCE_ID,question:process.env.QUESTION}))" > /tmp/browser-payload.json
+  curl --fail-with-body -sS --max-time 120 -X POST "${BASE_URL}/api/resource-retrieval/query" -H 'Content-Type: application/json' --data-binary @/tmp/browser-payload.json > "${output}"
+}
+
+browser_query 'fat-pslf-infographic-pdf' 'How many qualifying payments are required for Public Service Loan Forgiveness?' /tmp/browser-pslf.json
+BROWSER_JSON="$(cat /tmp/browser-pslf.json)" node - <<'NODE'
+const data=JSON.parse(process.env.BROWSER_JSON)
+const resource='fat-pslf-infographic-pdf'
+const expectedSha='a94826164435a3266f35bcfbeda24e0aaaeb5fa8db1bbd9867bd34f67153752a'
+if(!data.ok||data.resource_id!==resource||data.source_sha256!==expectedSha)throw new Error('PSLF browser retrieval identity mismatch')
+if(!(data.count>0)||!Array.isArray(data.evidence)||!data.evidence.length)throw new Error('PSLF browser retrieval returned no evidence')
+for(const item of data.evidence){
+  if(item.resource_id!==resource||item.source_sha256!==expectedSha)throw new Error('PSLF browser evidence escaped the selected node')
+  if(!Number.isFinite(Number(item.score))||!item.citation||!item.text||!item.source_url||!item.chunk_key||!item.chunk_sha256)throw new Error('PSLF browser evidence provenance incomplete')
+  if(!(Number(item.page_start)>=1)||!(Number(item.page_end)>=Number(item.page_start))||!Number.isFinite(Number(item.chunk_index)))throw new Error('PSLF browser evidence page/chunk metadata incomplete')
+}
+console.log('Browser PSLF positive retrieval verified with complete node-local provenance')
+NODE
+
+browser_query 'fat-money-management-checklist-pdf' 'How many qualifying payments are required for Public Service Loan Forgiveness?' /tmp/browser-wrong-node.json
+BROWSER_JSON="$(cat /tmp/browser-wrong-node.json)" node - <<'NODE'
+const data=JSON.parse(process.env.BROWSER_JSON)
+const resource='fat-money-management-checklist-pdf'
+const expectedSha='971976a17e564319c53bf909ff180f31b3be6dcfdbea1b8fb966dc7b64074cae'
+const forbiddenSha='a94826164435a3266f35bcfbeda24e0aaaeb5fa8db1bbd9867bd34f67153752a'
+if(!data.ok||data.resource_id!==resource||data.source_sha256!==expectedSha)throw new Error('Wrong-node browser retrieval identity mismatch')
+if(!Array.isArray(data.evidence))throw new Error('Wrong-node browser evidence is not an array')
+for(const item of data.evidence){
+  if(item.resource_id!==resource||item.source_sha256!==expectedSha)throw new Error('PSLF sibling identity leaked into Money Management response')
+  const serialized=JSON.stringify(item)
+  if(serialized.includes(forbiddenSha)||String(item.source_url||'').includes('pslf-infographic'))throw new Error('PSLF sibling provenance leaked into Money Management response')
+  if(!String(item.source_url||'').includes('money-management-checklist.pdf'))throw new Error('Wrong-node evidence source URL escaped the opened node')
+}
+console.log('Browser wrong-node isolation verified for Money Management Checklist')
+NODE
+
+browser_query 'fat-how-financial-aid-works-graphic' 'How does a school determine a student financial aid offer?' /tmp/browser-image.json
+BROWSER_JSON="$(cat /tmp/browser-image.json)" node - <<'NODE'
+const data=JSON.parse(process.env.BROWSER_JSON)
+const resource='fat-how-financial-aid-works-graphic'
+if(!data.ok||data.resource_id!==resource)throw new Error('Image-node browser retrieval identity mismatch')
+if(!(data.count>0)||!Array.isArray(data.evidence)||!data.evidence.length)throw new Error('Image-node browser retrieval returned no evidence')
+for(const item of data.evidence){
+  if(item.resource_id!==resource||item.source_sha256!==data.source_sha256)throw new Error('Image-node retrieval escaped the selected node')
+  if(!String(item.source_url||'').includes('how-financial-aid-works.pdf'))throw new Error('Image-node evidence source URL mismatch')
+}
+console.log('Browser image-based Financial Aid node retrieval verified')
+NODE
+
+if grep -R -n -E 'LAB_INGEST_TOKEN|X-Lab-Ingest-Token' /tmp/browser-pslf.json /tmp/browser-wrong-node.json /tmp/browser-image.json; then
+  echo 'A secret marker appeared in browser retrieval output'
+  exit 1
+fi
+
+echo 'Browser-safe node-local retrieval acceptance suite passed'
