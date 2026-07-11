@@ -147,6 +147,19 @@ for(const forbidden of ['LAB_INGEST_TOKEN','X-Lab-Ingest-Token','/admin/query-pi
 console.log('Browser Content Visor retrieval UI markers verified with no ingest-token/admin-route exposure')
 NODE
 
+ROOT_HTML="${ROOT_HTML}" node - <<'NODE'
+const fs=require('fs')
+const html=process.env.ROOT_HTML||''
+const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].map(match=>match[1])
+const browser=scripts.find(script=>script.includes('CV_PILOT_RESOURCE_IDS')&&script.includes('cvSubmitResourceQuestion'))
+if(!browser)throw new Error('Generated Link Lane browser script was not found')
+fs.writeFileSync('/tmp/afo-link-lane-browser.js',browser)
+console.log('Extracted generated browser script bytes: '+Buffer.byteLength(browser))
+NODE
+node --check /tmp/afo-link-lane-browser.js
+
+echo 'Generated browser script syntax verified'
+
 GET_CODE="$(curl -sS -o /tmp/browser-get.json -w '%{http_code}' "${BASE_URL}/api/resource-retrieval/query")"
 GET_CODE="${GET_CODE}" GET_JSON="$(cat /tmp/browser-get.json)" node - <<'NODE'
 const data=JSON.parse(process.env.GET_JSON)
