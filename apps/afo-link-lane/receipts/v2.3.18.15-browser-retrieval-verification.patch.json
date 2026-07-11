@@ -1,0 +1,48 @@
+{
+  "worker": "afo-gitzip",
+  "version": "0.2.2-unified",
+  "action": "apply_repo_text_patch",
+  "target": {
+    "owner": "nothinginfinity",
+    "repo": "afo-link-lane-v235-command-center-lab",
+    "branch": "main",
+    "path": "apps/afo-link-lane/scripts/verify-resource-retrieval.sh"
+  },
+  "source_sha": "18631d667d9e41875e048f8e151e7ba600d95c75",
+  "result_sha": "073408ba3bb40b9663fcf082b7e607ece63f2952",
+  "commit_sha": "a20b58faa73b86a409ec4ae66cc1736b6647f824",
+  "diff": {
+    "before_length": 8753,
+    "after_length": 16514,
+    "delta": 7761,
+    "common_prefix": 8753,
+    "common_suffix": 0,
+    "before_fingerprint": "2c04500b",
+    "after_fingerprint": "ca4fff48"
+  },
+  "applied": [
+    {
+      "label": "op_0",
+      "type": "replace_exact",
+      "changed": true,
+      "replaced": 1
+    }
+  ],
+  "verification": {
+    "ok": true,
+    "results": [
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      }
+    ],
+    "failed": []
+  },
+  "timestamp": "2026-07-11T19:15:48.827Z"
+}
