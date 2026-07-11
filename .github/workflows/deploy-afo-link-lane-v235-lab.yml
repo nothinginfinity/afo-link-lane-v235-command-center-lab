@@ -6,7 +6,7 @@ on:
       expected_version:
         description: Expected Worker VERSION value to deploy
         required: true
-        default: 2.3.18.13.1-financial-aid-r2-upload-fix
+        default: 2.3.18.14-resource-vector-retrieval
       confirm:
         description: Type DEPLOY to confirm this manual lab deploy
         required: true
@@ -23,7 +23,7 @@ jobs:
   deploy:
     name: Manual lab Worker deploy
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       EXPECTED_VERSION: ${{ inputs.expected_version }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -31,6 +31,8 @@ jobs:
       WORKER_CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
       WORKER_CF_BROWSER_RENDERING_API_TOKEN: ${{ secrets.CF_BROWSER_RENDERING_API_TOKEN }}
       HEALTH_URL: https://afo-link-lane-v235-lab.jaredtechfit.workers.dev/health
+      VECTOR_INDEX: afo-link-lane-v235-lab-resources-v1
+      D1_DATABASE: afo-link-lane-v235-lab-db
     steps:
       - name: Check manual confirmation
         shell: bash
@@ -68,16 +70,24 @@ jobs:
           cd apps/afo-link-lane
           npm install
 
-      - name: Syntax check Worker
+      - name: Validate Worker and retrieval module
         working-directory: apps/afo-link-lane
         shell: bash
-        run: node --check worker.js
+        run: |
+          node --check worker.js
+          node --check resource-retrieval.js
+          node -e "import('./resource-retrieval.js').then(m=>{for(const k of ['apiIndexPilotResources','apiQueryPilotResource','apiPilotRetrievalStatus','VECTOR_INDEX_NAME'])if(!(k in m))throw new Error('Missing export '+k);console.log('Retrieval module exports verified')})"
 
       - name: Assert Worker version
         working-directory: apps/afo-link-lane
         shell: bash
         run: |
           node -e "const fs=require('fs');const expected=process.env.EXPECTED_VERSION;const src=fs.readFileSync('worker.js','utf8');const match=src.match(/const VERSION\\s*=\\s*\"([^\"]+)\"/);if(!match)throw new Error('VERSION not found');console.log('Worker VERSION='+match[1]);if(match[1]!==expected)throw new Error('Expected '+expected+' but found '+match[1]);"
+
+      - name: Provision Vectorize metadata and D1 chunk ledger
+        working-directory: apps/afo-link-lane
+        shell: bash
+        run: bash scripts/provision-resource-retrieval.sh
 
       - name: Refresh Worker secrets
         working-directory: apps/afo-link-lane
@@ -110,7 +120,8 @@ jobs:
           echo "${HEALTH_JSON}"
           HEALTH_JSON="${HEALTH_JSON}" node -e "const data=JSON.parse(process.env.HEALTH_JSON);const expected=process.env.EXPECTED_VERSION;if(!data.ok)throw new Error('Health check returned ok=false');if(data.worker!=='afo-link-lane-v235-lab')throw new Error('Unexpected worker '+data.worker);if(data.version!==expected)throw new Error('Expected live version '+expected+' but found '+data.version);if(data.max_universe_nodes!==5000)throw new Error('Expected max_universe_nodes=5000');if(data.r2_resource_pilot!==5)throw new Error('Expected r2_resource_pilot=5');console.log('Live version verified: '+data.version);"
 
-      - name: Capture and extract Financial Aid Toolkit PDF pilot
+      - name: Legacy PDF recapture disabled for retrieval-only slice
+        if: ${{ false }}
         shell: bash
         run: |
           set -euo pipefail
@@ -164,3 +175,8 @@ jobs:
           fat-how-financial-aid-works-graphic|https://studentaid.gov/sites/default/files/how-financial-aid-works.pdf
           fat-federal-student-loan-graphic|https://studentaid.gov/sites/default/files/get-loan.pdf
           EOF
+
+      - name: Verify five-resource node-local retrieval
+        working-directory: apps/afo-link-lane
+        shell: bash
+        run: bash scripts/verify-resource-retrieval.sh
