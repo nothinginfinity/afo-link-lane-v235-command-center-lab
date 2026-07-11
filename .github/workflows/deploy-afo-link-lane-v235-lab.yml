@@ -6,7 +6,7 @@ on:
       expected_version:
         description: Expected Worker VERSION value to deploy
         required: true
-        default: 2.3.18.16-node-local-answer-quality
+        default: 2.3.19.0-node-chat-phase2-prototype
       confirm:
         description: Type DEPLOY to confirm this manual lab deploy
         required: true
@@ -77,9 +77,11 @@ jobs:
           node --check worker.js
           node --check resource-retrieval.js
           node --check resource-retrieval-quality.js
+          node --check resource-node-chat.js
           bash -n scripts/rebuild-financial-aid-quality.sh
           bash -n scripts/verify-resource-retrieval.sh
           node -e "import('./resource-retrieval-quality.js').then(m=>{for(const k of ['apiIndexPilotResources','apiQueryPilotResource','apiBrowserQueryPilotResource','apiPilotRetrievalStatus','VECTOR_INDEX_NAME','RANKING_VERSION','ANSWER_MODE'])if(!(k in m))throw new Error('Missing export '+k);if(m.RANKING_VERSION!=='hybrid-vector-lexical-v1'||m.ANSWER_MODE!=='extractive-evidence-v1')throw new Error('Unexpected quality module metadata');console.log('Retrieval quality module exports verified')})"
+          node -e "import('./resource-node-chat.js').then(m=>{for(const k of ['apiNodeChatTurn','CHAT_MODE','CHAT_MODEL','MAX_TURNS','signContext','verifyContext'])if(!(k in m))throw new Error('Missing export '+k);if(m.CHAT_MODE!=='grounded-synthesis-v1')throw new Error('Unexpected chat mode metadata');if(typeof m.MAX_TURNS!=='number'||m.MAX_TURNS<1)throw new Error('Unexpected MAX_TURNS');console.log('Node-chat module exports verified')})"
 
       - name: Assert Worker version
         working-directory: apps/afo-link-lane
