@@ -6,7 +6,7 @@ on:
       expected_version:
         description: Expected Worker VERSION value to deploy
         required: true
-        default: 2.3.18.14-resource-vector-retrieval
+        default: 2.3.18.15-node-local-retrieval-ui
       confirm:
         description: Type DEPLOY to confirm this manual lab deploy
         required: true
@@ -76,7 +76,7 @@ jobs:
         run: |
           node --check worker.js
           node --check resource-retrieval.js
-          node -e "import('./resource-retrieval.js').then(m=>{for(const k of ['apiIndexPilotResources','apiQueryPilotResource','apiPilotRetrievalStatus','VECTOR_INDEX_NAME'])if(!(k in m))throw new Error('Missing export '+k);console.log('Retrieval module exports verified')})"
+          node -e "import('./resource-retrieval.js').then(m=>{for(const k of ['apiIndexPilotResources','apiQueryPilotResource','apiBrowserQueryPilotResource','apiPilotRetrievalStatus','VECTOR_INDEX_NAME'])if(!(k in m))throw new Error('Missing export '+k);console.log('Retrieval module exports verified')})"
 
       - name: Assert Worker version
         working-directory: apps/afo-link-lane
@@ -113,20 +113,19 @@ jobs:
         shell: bash
         run: npx wrangler deploy --config wrangler.jsonc
 
-      - name: Record public workers.dev route status
+      - name: Verify public workers.dev route and version
         shell: bash
         run: |
-          set +e
-          HTTP_CODE="$(curl -sS -o /tmp/public-health.txt -w '%{http_code}' "${HEALTH_URL}")"
-          cat /tmp/public-health.txt || true
+          set -euo pipefail
+          HTTP_CODE="$(curl -sS --retry 6 --retry-all-errors --retry-delay 5 -o /tmp/public-health.txt -w '%{http_code}' "${HEALTH_URL}")"
+          cat /tmp/public-health.txt
           echo "Public workers.dev health status: ${HTTP_CODE}"
-          if [ "${HTTP_CODE}" = "200" ]; then
-            HEALTH_JSON="$(cat /tmp/public-health.txt)"
-            HEALTH_JSON="${HEALTH_JSON}" node -e "const data=JSON.parse(process.env.HEALTH_JSON);if(data.version!==process.env.EXPECTED_VERSION)throw new Error('Unexpected public live version '+data.version);console.log('Public live version verified: '+data.version);"
-          else
-            echo "Public workers.dev route remains unavailable; retrieval verification will use Wrangler remote runtime against the live bindings."
+          if [ "${HTTP_CODE}" != "200" ]; then
+            echo "Public lab route must be available for the iPhone acceptance slice"
+            exit 1
           fi
-          exit 0
+          HEALTH_JSON="$(cat /tmp/public-health.txt)"
+          HEALTH_JSON="${HEALTH_JSON}" node -e "const data=JSON.parse(process.env.HEALTH_JSON);if(data.version!==process.env.EXPECTED_VERSION)throw new Error('Unexpected public live version '+data.version);if(data.resource_retrieval?.browser_route!=='/api/resource-retrieval/query'||data.resource_retrieval?.browser_allowlist_size!==5)throw new Error('Browser retrieval health metadata missing');console.log('Public live version and browser route verified: '+data.version);"
 
       - name: Legacy PDF recapture disabled for retrieval-only slice
         if: ${{ false }}
@@ -216,3 +215,10 @@ jobs:
           bash scripts/verify-resource-retrieval.sh
           echo "Wrangler remote runtime log tail:"
           tail -n 80 /tmp/wrangler-remote.log || true
+
+      - name: Verify public live UI and browser-safe node-local retrieval
+        working-directory: apps/afo-link-lane
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/verify-resource-retrieval.sh
