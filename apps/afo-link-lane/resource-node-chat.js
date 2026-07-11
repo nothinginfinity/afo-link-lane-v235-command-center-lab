@@ -149,7 +149,7 @@ async function generateGroundedAnswer(env, question, turns, evidence) {
     result = await env.AI.run(CHAT_MODEL, {
       messages: [{ role: "system", content: system }, { role: "user", content: user }],
       response_format: { type: "json_object" },
-      max_completion_tokens: 4000
+      max_completion_tokens: 8000
     });
   } catch { return null; }
   const raw = result && (result.response ?? result.result ?? result);
