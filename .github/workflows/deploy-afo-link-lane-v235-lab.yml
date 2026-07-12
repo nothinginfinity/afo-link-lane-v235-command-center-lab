@@ -6,7 +6,7 @@ on:
       expected_version:
         description: Expected Worker VERSION value to deploy
         required: true
-        default: 2.3.20.1-universal-resource-keying
+        default: 2.3.20.2-article-lazy-index
       confirm:
         description: Type DEPLOY to confirm this manual lab deploy
         required: true
@@ -76,6 +76,7 @@ jobs:
         run: |
           node --check worker.js
           node --check resource-retrieval.js
+          node --check article-index.js
           node --check resource-retrieval-quality.js
           node --check resource-node-chat.js
           bash -n scripts/rebuild-financial-aid-quality.sh
