@@ -85,10 +85,29 @@ payload = {
 Path(os.environ["PAYLOAD_PATH"]).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 PY
 
-  STORE_JSON="$(curl --fail-with-body -sS --max-time 120 -X POST "${BASE_URL}/admin/store-pilot-text" \
-    -H 'Content-Type: application/json' \
-    -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" \
-    --data-binary "@${PAYLOAD_PATH}")"
+  STORE_JSON=''
+  STORE_OK=0
+  for STORE_ATTEMPT in $(seq 1 6)
+  do
+    STORE_CODE="$(curl -sS --max-time 120 -o "${WORK_DIR}/store-response.json" -w '%{http_code}' -X POST "${BASE_URL}/admin/store-pilot-text" \
+      -H 'Content-Type: application/json' \
+      -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" \
+      --data-binary "@${PAYLOAD_PATH}" || true)"
+    STORE_JSON="$(cat "${WORK_DIR}/store-response.json" 2>/dev/null || true)"
+    echo "Store attempt ${STORE_ATTEMPT} for ${RESOURCE_ID}: HTTP ${STORE_CODE} ${STORE_JSON}"
+    if [ "${STORE_CODE}" = "200" ]; then
+      STORE_OK=1
+      break
+    fi
+    if [ "${STORE_CODE}" != "401" ] && [ "${STORE_CODE}" != "503" ]; then
+      break
+    fi
+    sleep $((STORE_ATTEMPT * 3))
+  done
+  if [ "${STORE_OK}" != "1" ]; then
+    echo "Authenticated text storage failed for ${RESOURCE_ID}"
+    exit 1
+  fi
   echo "${STORE_JSON}"
   STORE_JSON="${STORE_JSON}" RESOURCE_ID="${RESOURCE_ID}" SOURCE_SHA="${ACTUAL_SHA}" TEXT_SHA="${TEXT_SHA}" PAGE_COUNT="${PAGE_COUNT}" node - <<'NODE'
 const data=JSON.parse(process.env.STORE_JSON)
@@ -112,10 +131,29 @@ cat > "${WORK_DIR}/index.json" <<'JSON'
 {"resource_ids":["fat-do-you-need-money-pdf","fat-money-management-checklist-pdf","fat-pslf-infographic-pdf","fat-how-financial-aid-works-graphic","fat-federal-student-loan-graphic"]}
 JSON
 
-INDEX_JSON="$(curl --fail-with-body -sS --max-time 300 -X POST "${BASE_URL}/admin/index-pilot-resources" \
-  -H 'Content-Type: application/json' \
-  -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" \
-  --data-binary "@${WORK_DIR}/index.json")"
+INDEX_JSON=''
+INDEX_OK=0
+for INDEX_ATTEMPT in $(seq 1 6)
+do
+  INDEX_CODE="$(curl -sS --max-time 300 -o "${WORK_DIR}/index-response.json" -w '%{http_code}' -X POST "${BASE_URL}/admin/index-pilot-resources" \
+    -H 'Content-Type: application/json' \
+    -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" \
+    --data-binary "@${WORK_DIR}/index.json" || true)"
+  INDEX_JSON="$(cat "${WORK_DIR}/index-response.json" 2>/dev/null || true)"
+  echo "Index attempt ${INDEX_ATTEMPT}: HTTP ${INDEX_CODE} ${INDEX_JSON}"
+  if [ "${INDEX_CODE}" = "200" ]; then
+    INDEX_OK=1
+    break
+  fi
+  if [ "${INDEX_CODE}" != "401" ] && [ "${INDEX_CODE}" != "503" ]; then
+    break
+  fi
+  sleep $((INDEX_ATTEMPT * 3))
+done
+if [ "${INDEX_OK}" != "1" ]; then
+  echo "Authenticated pilot re-index failed"
+  exit 1
+fi
 echo "${INDEX_JSON}"
 INDEX_JSON="${INDEX_JSON}" node - <<'NODE'
 const data=JSON.parse(process.env.INDEX_JSON)
