@@ -2,7 +2,7 @@ import { apiIndexPilotResources, apiQueryPilotResource, apiBrowserQueryPilotReso
 import { apiNodeChatTurn } from "./resource-node-chat.js";
 import { renderNodeChatDebugPage } from "./debug-node-chat.js";
 
-const VERSION = "2.3.19.2-node-chat-debug-harness";
+const VERSION = "2.3.20.0-node-chat-content-visor";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
