@@ -1,8 +1,9 @@
 import { apiIndexPilotResources, apiQueryPilotResource, apiBrowserQueryPilotResource, apiPilotRetrievalStatus, VECTOR_INDEX_NAME, RANKING_VERSION, ANSWER_MODE } from "./resource-retrieval-quality.js";
-import { apiNodeChatTurn } from "./resource-node-chat.js";
+import { apiNodeChatTurn, apiNodeChatTurnStream } from "./resource-node-chat.js";
 import { renderNodeChatDebugPage } from "./debug-node-chat.js";
+import { backfillFts } from "./article-index.js";
 
-const VERSION = "2.3.20.3.1-vector-readiness-window";
+const VERSION = "2.3.20.4-lexical-fts-streaming-instant";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
@@ -2475,6 +2476,16 @@ async function apiStorePilotText(env,request){
   return j({ok:true,resource_id:resourceId,source_sha256:sourceSha256,text_sha256:textSha256,text_size_bytes:textBytes.byteLength,page_count:pageCount,text_key:textKey,manifest_key:manifestKey,extraction_engine:extractionEngine,extracted_at:extractedAt});
 }
 
+async function apiBackfillFts(env, request) {
+  if (!env.LAB_INGEST_TOKEN) return j({ ok: false, error: "LAB_INGEST_TOKEN is not configured" }, 503);
+  const supplied = request.headers.get("X-Lab-Ingest-Token") || "";
+  if (!constantTimeEqual(supplied, env.LAB_INGEST_TOKEN)) return j({ ok: false, error: "Unauthorized" }, 401);
+  const url = new URL(request.url);
+  const dryRun = url.searchParams.get("dry_run") === "1";
+  const result = await backfillFts(env, { dryRun });
+  return j(result, result.ok === false && !dryRun ? 207 : 200);
+}
+
 // =================== ROUTER ===================
 
 export default {
@@ -2505,11 +2516,12 @@ export default {
     if(path==="/admin/index-pilot-resources"&&method==="POST") return apiIndexPilotResources(env,request);
     if(path==="/api/resource-retrieval/query"&&method==="POST") return apiBrowserQueryPilotResource(env,request);
     if(path==="/api/resource-retrieval/query") return new Response(JSON.stringify({ok:false,error:"Method not allowed"}),{status:405,headers:{...CORS,"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store","Allow":"POST"}});
-    if(path==="/api/resource-chat/turn"&&method==="POST") return apiNodeChatTurn(env,request);
+    if(path==="/api/resource-chat/turn"&&method==="POST") return url.searchParams.get("stream")==="1"?apiNodeChatTurnStream(env,request,ctx):apiNodeChatTurn(env,request);
     if(path==="/api/resource-chat/turn") return new Response(JSON.stringify({ok:false,error:"Method not allowed"}),{status:405,headers:{...CORS,"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store","Allow":"POST"}});
     if(path==="/debug/node-chat"&&method==="GET") return renderNodeChatDebugPage();
     if(path==="/admin/query-pilot-resource"&&method==="POST") return apiQueryPilotResource(env,request);
     if(path==="/admin/pilot-retrieval-status"&&method==="GET") return apiPilotRetrievalStatus(env,request);
+    if(path==="/admin/backfill-fts"&&method==="POST") return apiBackfillFts(env,request);
     if(path==="/health") return j({ok:true,worker:WORKER_NAME,version:VERSION,max_universe_nodes:MAX_UNIVERSE_NODES,r2_resource_pilot:PILOT_RESOURCE_IDS.size,resource_retrieval:{index_name:VECTOR_INDEX_NAME,namespace:"financial-aid-toolkit",embedding_model:"@cf/baai/bge-base-en-v1.5",embedding_pooling:"cls",embedding_dimensions:768,ai_binding:Boolean(env.AI),vector_binding:Boolean(env.RESOURCE_VECTORS),browser_route:"/api/resource-retrieval/query",resource_keying:"links.id",chunker_version:"pdf-page-v2-reading-order",normalizer:"pdf-reading-order-v2",ranking_version:RANKING_VERSION,answer_mode:ANSWER_MODE}});
     if(path==="/admin/setup"&&method==="POST"){
       const results=[];
