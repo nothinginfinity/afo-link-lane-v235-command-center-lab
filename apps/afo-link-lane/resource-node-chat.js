@@ -3,6 +3,12 @@ import {
   RANKING_VERSION,
   ANSWER_MODE
 } from "./resource-retrieval-quality.js";
+import {
+  runPhaseA,
+  runPhaseB,
+  findArticleManifest,
+  queryLexicalOnly
+} from "./article-index.js";
 
 const CHAT_MODE = "grounded-synthesis-v1";
 const CHAT_MODEL = "@cf/zai-org/glm-4.7-flash";
@@ -305,4 +311,159 @@ async function apiNodeChatTurn(env, request) {
   });
 }
 
-export { apiNodeChatTurn, CHAT_MODE, CHAT_MODEL, MAX_TURNS, signContext, verifyContext };
+// ==================== streaming chat-turn endpoint (?stream=1) ====================
+// Roadmap Step 2 of the multi-tier streaming chat plan (e972799d3c65),
+// scoped to this session per handoff 264b11be3d12: ONLY tier:"instant" is
+// streamed. tier:"deep" is computed with the existing unchanged pipeline
+// and sent as the final event of the same stream (explicitly permitted by
+// the handoff rather than requiring a separate non-streamed round trip).
+// tier:"fast" (external model) is NOT wired -- deferred to a future session
+// pending Jared's provider/key decision, per plan Part 1.D.
+//
+// The single-JSON contract (apiNodeChatTurn above) is completely unchanged
+// and remains the default; this is an additive code path selected only by
+// the caller passing ?stream=1, so /debug/node-chat and
+// verify-node-chat.sh's existing 9/9 and 368/369 coverage are unaffected.
+
+function sseEvent(obj) { return "data: " + JSON.stringify(obj) + "\n\n"; }
+
+// Fast, no-LLM extractive surface for the instant tier: just the single
+// highest-bm25-ranked lexical chunk, not a synthesized answer -- synthesis
+// (tier:"fast"/"deep") is explicitly out of scope for the instant tier.
+function instantExtractiveAnswer(evidence) {
+  if (!evidence.length) {
+    return { direct: false, kind: "extractive", mode: "lexical-instant-v1", text: "No lexical evidence was found in this node yet.", citations: [], cited_chunk_indexes: [], resource_id: null };
+  }
+  const top = evidence[0];
+  return {
+    direct: false,
+    kind: "extractive",
+    mode: "lexical-instant-v1",
+    text: String(top.text || "").slice(0, 400),
+    citations: [top.citation],
+    cited_chunk_indexes: [top.chunk_index],
+    resource_id: top.resource_id
+  };
+}
+
+async function apiNodeChatTurnStream(env, request, ctx) {
+  if (request.method !== "POST") return browserJson({ ok: false, error: "Method not allowed" }, 405, { Allow: "POST" });
+  const blocked = browserGuard(request);
+  if (blocked) return blocked;
+  const body = await request.json().catch(() => null);
+  if (!body || Array.isArray(body) || typeof body !== "object") return browserJson({ ok: false, error: "A JSON object is required" }, 400);
+  const allowedKeys = new Set(["resource_id", "question", "session_id", "turns", "context_token"]);
+  if (Object.keys(body).some(key => !allowedKeys.has(key))) return browserJson({ ok: false, error: "Only resource_id, question, session_id, turns, and context_token are accepted" }, 400);
+
+  const resourceId = String(body.resource_id || "").trim();
+  const question = String(body.question || "").trim();
+  if (question.length < 3 || question.length > 500) return browserJson({ ok: false, error: "Question must be between 3 and 500 characters" }, 400);
+
+  const shapeCheck = validateTurnsShape(resourceId, body.turns);
+  if (!shapeCheck.ok) return browserJson({ ok: false, error: shapeCheck.error, cross_node: Boolean(shapeCheck.cross_node) }, shapeCheck.cross_node ? 409 : 400);
+
+  let sessionId;
+  if (shapeCheck.turns.length) {
+    const verified = await verifyContext(env, resourceId, shapeCheck.turns, body.context_token);
+    if (!verified.ok) {
+      const expired = verified.reason === "expired";
+      return browserJson({ ok: false, error: expired ? "Session has expired. Start a new node chat." : "Session history could not be verified. Start a new node chat.", tampered: true, expired }, 409);
+    }
+    sessionId = verified.session_id;
+  } else {
+    sessionId = body.session_id && typeof body.session_id === "string" ? body.session_id.slice(0, 80) : newSessionId();
+  }
+
+  const encoder = new TextEncoder();
+  let controllerRef;
+  const stream = new ReadableStream({ start(controller) { controllerRef = controller; } });
+  const send = obj => { try { controllerRef.enqueue(encoder.encode(sseEvent(obj))); } catch { } };
+
+  const run = (async () => {
+    try {
+      let sourceSha256;
+      let phaseBPromise = null;
+      const manifest = await findArticleManifest(env, resourceId).catch(() => null);
+      if (manifest && manifest.chunking && manifest.sha256) {
+        sourceSha256 = manifest.sha256;
+      } else {
+        send({ tier: "instant", kind: "indexing_started", resource_id: resourceId });
+        let phaseA;
+        try {
+          phaseA = await runPhaseA(env, resourceId, "stream-" + Date.now().toString(36));
+        } catch (e) {
+          send({ tier: "instant", kind: "error", resource_id: resourceId, error: e && e.message || String(e) });
+          send({ tier: "deep", kind: "error", resource_id: resourceId, error: "Indexing failed; deep tier unavailable this turn." });
+          return;
+        }
+        sourceSha256 = phaseA.source_sha256;
+        // Runs concurrently with the instant-tier lexical query below, not
+        // blocking it -- this is the actual "instant tier doesn't wait on
+        // Vectorize" fix. Still awaited before the deep tier needs it.
+        phaseBPromise = runPhaseB(env, phaseA);
+        ctx.waitUntil(phaseBPromise.catch(e => { console.error("Phase B background failure for " + resourceId + ": " + (e && e.message || String(e))); }));
+      }
+
+      // ---- tier: instant -- real D1 FTS5 lexical retrieval, no Vectorize ----
+      let lexicalEvidence = [];
+      try { lexicalEvidence = await queryLexicalOnly(env, resourceId, sourceSha256, question, 8); } catch { /* best-effort; deep tier still runs */ }
+      const instantAnswer = instantExtractiveAnswer(lexicalEvidence);
+      send({ tier: "instant", kind: instantAnswer.kind, resource_id: resourceId, answer: instantAnswer, evidence: lexicalEvidence, count: lexicalEvidence.length });
+
+      // ---- tier: deep -- existing unchanged grounded-synthesis pipeline ----
+      if (phaseBPromise) { try { await phaseBPromise; } catch { /* deep tier below will degrade gracefully via apiQueryPilotResource's own on-demand fallback */ } }
+      const internalRequest = new Request(request.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Lab-Ingest-Token": String(env.LAB_INGEST_TOKEN || "") },
+        body: JSON.stringify({ resource_id: resourceId, question, top_k: 12 })
+      });
+      const retrievalResponse = await apiQueryPilotResource(env, internalRequest);
+      let payload;
+      try { payload = await retrievalResponse.json(); } catch { payload = null; }
+      if (!payload || !payload.ok || payload.resource_id !== resourceId) {
+        send({ tier: "deep", kind: "error", resource_id: resourceId, error: (payload && payload.error) || "Retrieval failed" });
+        return;
+      }
+      const evidence = Array.isArray(payload.evidence) ? payload.evidence : [];
+      if (evidence.some(item => !item || item.resource_id !== resourceId)) {
+        send({ tier: "deep", kind: "error", resource_id: resourceId, error: "Cross-node evidence rejected" });
+        return;
+      }
+      let answer;
+      if (!evidence.length) {
+        answer = { direct: false, kind: "extractive", mode: ANSWER_MODE, text: "No evidence was found in this node for that question.", citations: [], cited_chunk_indexes: [], resource_id: resourceId };
+      } else {
+        answer = await generateGroundedAnswer(env, question, shapeCheck.turns, evidence);
+        if (!answer) answer = extractiveFallback(payload);
+      }
+      if (answer.resource_id && answer.resource_id !== resourceId) {
+        send({ tier: "deep", kind: "error", resource_id: resourceId, error: "Node-local answer integrity check failed" });
+        return;
+      }
+      const newTurn = { resource_id: resourceId, question, answer_text: answer.text, direct: answer.direct, citations: answer.citations };
+      const turns = [...shapeCheck.turns, newTurn].slice(-MAX_TURNS);
+      const contextToken = await signContext(env, resourceId, sessionId, turns);
+      send({
+        tier: "deep", kind: answer.kind, resource_id: resourceId, session_id: sessionId, context_token: contextToken,
+        ranking_version: RANKING_VERSION, chat_mode: CHAT_MODE, answer, evidence, turns, count: evidence.length
+      });
+    } catch (e) {
+      send({ tier: "deep", kind: "error", resource_id: resourceId, error: e && e.message || String(e) });
+    } finally {
+      try { controllerRef.close(); } catch { }
+    }
+  })();
+  ctx.waitUntil(run);
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-store",
+      "Connection": "keep-alive",
+      "X-Content-Type-Options": "nosniff",
+      "Access-Control-Allow-Origin": "*"
+    }
+  });
+}
+
+export { apiNodeChatTurn, apiNodeChatTurnStream, CHAT_MODE, CHAT_MODEL, MAX_TURNS, signContext, verifyContext };
