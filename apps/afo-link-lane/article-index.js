@@ -151,7 +151,7 @@ async function embed(env, texts) {
   return rows;
 }
 
-const VECTOR_READINESS_DELAYS_MS = [0, 100, 250, 500, 1000];
+const VECTOR_READINESS_DELAYS_MS = [0, 250, 500, 1000, 2000, 4000];
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
@@ -177,7 +177,7 @@ async function waitForVectorReadiness(env, values, expectedVectorId, resourceId,
     }
   }
   const suffix = lastError ? ": " + (lastError.message || String(lastError)) : "";
-  throw new Error("Vectorize indexing was not queryable after bounded readiness polling for " + resourceId + suffix);
+  throw new Error("Vectorize indexing was not queryable after " + waitedMs + "ms of bounded readiness polling for " + resourceId + suffix);
 }
 
 // ==================== index + manifest ====================
