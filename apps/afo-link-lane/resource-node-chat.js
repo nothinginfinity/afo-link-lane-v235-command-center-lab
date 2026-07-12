@@ -47,38 +47,66 @@ function base64UrlToBuffer(str) {
   return bytes.buffer;
 }
 
-// The context token is the actual server-verifiable session envelope: an HMAC
-// over (resource_id, bounded turns) keyed off a value derived from the
-// worker's own ingest secret. A client can carry the token and the turns
-// array between requests, but cannot forge a token for turns it invented or
-// edited without the secret. This is what makes client-carried history safe
-// to trust: verify the signature before ever feeding history text into the
-// model prompt, not after.
+// The context token is the actual server-verifiable session envelope: a
+// versioned, self-contained, HMAC-signed bundle of (v, iat, exp, session_id,
+// resource_id, bounded turns). The token is opaque to the client -- it's just
+// carried and echoed back -- but every field that matters is bound into the
+// signature, so a client can carry state between requests without ever being
+// trusted to assert any of it unverified.
+//
+// Key material: prefers a dedicated NODE_CHAT_CONTEXT_SECRET so that rotating
+// LAB_INGEST_TOKEN (used for retrieval auth) doesn't silently invalidate
+// every live chat session and vice versa. Falls back to deriving from
+// LAB_INGEST_TOKEN (with a domain-separation salt) only if the dedicated
+// secret hasn't been provisioned yet, so this doesn't break existing
+// deploys -- but NODE_CHAT_CONTEXT_SECRET should be set before real traffic.
+const CONTEXT_TOKEN_VERSION = 1;
+const CONTEXT_TOKEN_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+
 async function deriveContextKey(env) {
-  if (!env.LAB_INGEST_TOKEN) return null;
-  const material = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(env.LAB_INGEST_TOKEN) + ":" + CONTEXT_TOKEN_SALT));
+  const secret = env.NODE_CHAT_CONTEXT_SECRET || env.LAB_INGEST_TOKEN;
+  if (!secret) return null;
+  const material = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(secret) + ":" + CONTEXT_TOKEN_SALT));
   return crypto.subtle.importKey("raw", material, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
 }
-function canonicalTurnsPayload(resourceId, turns) {
+function canonicalPayload(resourceId, sessionId, turns, envelope) {
   return JSON.stringify({
+    v: envelope.v,
+    iat: envelope.iat,
+    exp: envelope.exp,
+    session_id: sessionId,
     resource_id: resourceId,
     turns: turns.map(t => ({ resource_id: t.resource_id, question: t.question, answer_text: t.answer_text, direct: Boolean(t.direct), citations: t.citations }))
   });
 }
-async function signContext(env, resourceId, turns) {
+async function signContext(env, resourceId, sessionId, turns) {
   const key = await deriveContextKey(env);
   if (!key) return null;
-  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(canonicalTurnsPayload(resourceId, turns)));
-  return bufferToBase64Url(sig);
+  const iat = Date.now();
+  const envelope = { v: CONTEXT_TOKEN_VERSION, iat, exp: iat + CONTEXT_TOKEN_TTL_MS, resource_id: resourceId };
+  const payload = canonicalPayload(resourceId, sessionId, turns, envelope);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  const envelopeB64 = bufferToBase64Url(new TextEncoder().encode(JSON.stringify({ ...envelope, session_id: sessionId })).buffer);
+  return envelopeB64 + "." + bufferToBase64Url(sig);
 }
 async function verifyContext(env, resourceId, turns, token) {
-  if (!token || typeof token !== "string") return false;
+  if (!token || typeof token !== "string" || !token.includes(".")) return { ok: false };
+  const [envelopePart, sigPart] = token.split(".");
+  let envelope;
+  try { envelope = JSON.parse(new TextDecoder().decode(base64UrlToBuffer(envelopePart))); } catch { return { ok: false }; }
+  if (!envelope || envelope.v !== CONTEXT_TOKEN_VERSION) return { ok: false, reason: "unsupported_version" };
+  if (typeof envelope.exp !== "number" || Date.now() > envelope.exp) return { ok: false, reason: "expired" };
+  if (envelope.resource_id !== resourceId) return { ok: false, reason: "resource_mismatch" };
+  if (!envelope.session_id || typeof envelope.session_id !== "string") return { ok: false };
   const key = await deriveContextKey(env);
-  if (!key) return false;
+  if (!key) return { ok: false };
+  const payload = canonicalPayload(resourceId, envelope.session_id, turns, envelope);
   let sigBytes;
-  try { sigBytes = base64UrlToBuffer(token); } catch { return false; }
-  try { return await crypto.subtle.verify("HMAC", key, sigBytes, new TextEncoder().encode(canonicalTurnsPayload(resourceId, turns))); }
-  catch { return false; }
+  try { sigBytes = base64UrlToBuffer(sigPart); } catch { return { ok: false }; }
+  let verified;
+  try { verified = await crypto.subtle.verify("HMAC", key, sigBytes, new TextEncoder().encode(payload)); } catch { return { ok: false }; }
+  if (!verified) return { ok: false };
+  return { ok: true, session_id: envelope.session_id };
 }
 
 // Structural shape check only -- NOT a trust boundary. A turn passing this
@@ -217,15 +245,23 @@ async function apiNodeChatTurn(env, request) {
   if (!shapeCheck.ok) return browserJson({ ok: false, error: shapeCheck.error, cross_node: Boolean(shapeCheck.cross_node) }, shapeCheck.cross_node ? 409 : 400);
 
   // Fail-closed trust boundary: any non-empty history must carry a context
-  // token that verifies against exactly this (resource_id, turns) tuple.
-  // A missing or invalid token with non-empty turns is treated as tampered
-  // or forged history -- rejected outright, never fed into the model prompt.
+  // token that verifies against exactly this (resource_id, turns) tuple, is
+  // an accepted version, and has not expired. A missing, invalid, expired,
+  // or wrong-version token with non-empty turns is treated as tampered or
+  // forged history -- rejected outright, never fed into the model prompt.
+  let sessionId;
   if (shapeCheck.turns.length) {
     const verified = await verifyContext(env, resourceId, shapeCheck.turns, body.context_token);
-    if (!verified) return browserJson({ ok: false, error: "Session history could not be verified. Start a new node chat.", tampered: true }, 409);
+    if (!verified.ok) {
+      const expired = verified.reason === "expired";
+      return browserJson({ ok: false, error: expired ? "Session has expired. Start a new node chat." : "Session history could not be verified. Start a new node chat.", tampered: true, expired }, 409);
+    }
+    // session_id is bound into the signature -- once turns are non-empty, it
+    // comes from the verified token only, never from client-supplied body.
+    sessionId = verified.session_id;
+  } else {
+    sessionId = body.session_id && typeof body.session_id === "string" ? body.session_id.slice(0, 80) : newSessionId();
   }
-
-  const sessionId = body.session_id && typeof body.session_id === "string" ? body.session_id.slice(0, 80) : newSessionId();
 
   // Retrieval is re-run from scratch every turn, scoped strictly to resourceId --
   // never reused or carried over from a prior turn or a different node.
@@ -253,7 +289,7 @@ async function apiNodeChatTurn(env, request) {
 
   const newTurn = { resource_id: resourceId, question, answer_text: answer.text, direct: answer.direct, citations: answer.citations };
   const turns = [...shapeCheck.turns, newTurn].slice(-MAX_TURNS);
-  const contextToken = await signContext(env, resourceId, turns);
+  const contextToken = await signContext(env, resourceId, sessionId, turns);
 
   return browserJson({
     ok: true,
