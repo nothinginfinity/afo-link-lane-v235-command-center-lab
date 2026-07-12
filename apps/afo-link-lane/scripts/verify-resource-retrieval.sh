@@ -24,7 +24,8 @@ if(data.resource_retrieval?.chunker_version!=='pdf-page-v2-reading-order')throw 
 if(data.resource_retrieval?.normalizer!=='pdf-reading-order-v2')throw new Error('Unexpected reading-order normalizer')
 if(data.resource_retrieval?.ranking_version!=='hybrid-vector-lexical-v1')throw new Error('Unexpected ranking version')
 if(data.resource_retrieval?.answer_mode!=='extractive-evidence-v1')throw new Error('Unexpected answer mode')
-console.log('Live version, retrieval bindings, ranking, and extractive answer mode verified')
+if(data.resource_retrieval?.resource_keying!=='links.id')throw new Error('Unexpected resource keying')
+console.log('Live version, retrieval bindings, universal resource keying, ranking, and extractive answer mode verified')
 NODE
 
 while IFS= read -r RESOURCE_ID
@@ -162,7 +163,7 @@ node - <<'NODE'
 const fs=require('fs')
 const html=fs.readFileSync('/tmp/link-lane-root.html','utf8')
 const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].map(match=>match[1])
-const browser=scripts.find(script=>script.includes('CV_PILOT_RESOURCE_IDS')&&script.includes('cvSubmitChatTurn'))
+const browser=scripts.find(script=>script.includes('cvSubmitChatTurn')&&script.includes('/api/resource-chat/turn')&&script.includes('cvBindResourceChat'))
 if(!browser)throw new Error('Generated Link Lane browser script was not found')
 fs.writeFileSync('/tmp/afo-link-lane-browser.js',browser)
 console.log('Extracted generated browser script bytes: '+Buffer.byteLength(browser))
@@ -195,8 +196,8 @@ NODE
 ARBITRARY_CODE="$(curl -sS -o /tmp/browser-arbitrary.json -w '%{http_code}' -X POST "${BASE_URL}/api/resource-retrieval/query" -H 'Content-Type: application/json' --data-binary '{"resource_id":"not-an-approved-node","question":"What does this say?"}')"
 ARBITRARY_CODE="${ARBITRARY_CODE}" ARBITRARY_JSON="$(cat /tmp/browser-arbitrary.json)" node - <<'NODE'
 const data=JSON.parse(process.env.ARBITRARY_JSON)
-if(Number(process.env.ARBITRARY_CODE)!==403||data.ok!==false)throw new Error('Browser route accepted an arbitrary resource ID')
-console.log('Browser route pilot allowlist verified')
+if(Number(process.env.ARBITRARY_CODE)!==404||data.ok!==false||data.error!=='Resource node not found')throw new Error('Browser route did not reject an unknown links.id resource')
+console.log('Browser route unknown links.id rejection verified')
 NODE
 
 EXTRA_CODE="$(curl -sS -o /tmp/browser-extra.json -w '%{http_code}' -X POST "${BASE_URL}/api/resource-retrieval/query" -H 'Content-Type: application/json' --data-binary '{"resource_id":"fat-pslf-infographic-pdf","question":"How many qualifying payments are required?","top_k":20}')"
