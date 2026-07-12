@@ -149,7 +149,7 @@ curl --fail-with-body -sS "${BASE_URL}/" -o /tmp/link-lane-root.html
 node - <<'NODE'
 const fs=require('fs')
 const html=fs.readFileSync('/tmp/link-lane-root.html','utf8')
-for(const marker of ['cvQuestion','Search This Node','cvAnswerCard','ANSWER FROM THIS NODE','NO DIRECT ANSWER IN THIS NODE','Open Original ↗','← Return to Universe','/api/resource-retrieval/query','NODE-LOCAL RETRIEVAL']){
+for(const marker of ['cvQuestion','Send','cvAnswerCard','ANSWER FROM THIS NODE','NO DIRECT ANSWER IN THIS NODE','Open Original ↗','← Return to Universe','/api/resource-chat/turn','NODE CHAT','cvChatLog','New Chat','cvSubmitChatTurn']){
   if(!html.includes(marker))throw new Error('Missing browser UI marker '+marker)
 }
 for(const forbidden of ['LAB_INGEST_TOKEN','X-Lab-Ingest-Token','/admin/query-pilot-resource','\\u2190 Return to Universe','Open Original \\u2197']){
@@ -162,7 +162,7 @@ node - <<'NODE'
 const fs=require('fs')
 const html=fs.readFileSync('/tmp/link-lane-root.html','utf8')
 const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].map(match=>match[1])
-const browser=scripts.find(script=>script.includes('CV_PILOT_RESOURCE_IDS')&&script.includes('cvSubmitResourceQuestion'))
+const browser=scripts.find(script=>script.includes('CV_PILOT_RESOURCE_IDS')&&script.includes('cvSubmitChatTurn'))
 if(!browser)throw new Error('Generated Link Lane browser script was not found')
 fs.writeFileSync('/tmp/afo-link-lane-browser.js',browser)
 console.log('Extracted generated browser script bytes: '+Buffer.byteLength(browser))
