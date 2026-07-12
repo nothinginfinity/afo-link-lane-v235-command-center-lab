@@ -202,9 +202,11 @@ async function indexArticleResource(env, resourceId, ingestId) {
   await env.DB.prepare("UPDATE resource_chunks SET index_state='stale', updated_at=datetime('now') WHERE resource_id=? AND index_state='indexed'").bind(resourceId).run();
   await env.DB.prepare("DELETE FROM resource_chunks WHERE resource_id=? AND source_sha256=?").bind(resourceId, sourceSha256).run();
 
+  let readinessValues = null;
   for (let offset = 0; offset < prepared.length; offset += 16) {
     const batch = prepared.slice(offset, offset + 16);
     const embeddings = await embed(env, batch.map(v => v.embedding_text));
+    if (!readinessValues) readinessValues = embeddings[0];
     const vectors = batch.map((v, i) => ({
       id: v.vector_id, values: embeddings[i], namespace: VECTOR_NAMESPACE,
       metadata: {
@@ -235,11 +237,11 @@ async function indexArticleResource(env, resourceId, ingestId) {
     chunking: {
       chunker_version: CHUNKER_VERSION, config_sha256: CHUNK_CONFIG_SHA256, chunk_count: prepared.length,
       namespace: VECTOR_NAMESPACE, vectorize_index: VECTOR_INDEX_NAME, embedding_model: EMBEDDING_MODEL,
-      embedding_pooling: EMBEDDING_POOLING, embedding_dimensions: EMBEDDING_DIMENSIONS, completed_at: new Date().toISOString()
+      embedding_pooling: EMBEDDING_POOLING, embedding_dimensions: EMBEDDING_DIMENSIONS, readiness, completed_at: new Date().toISOString()
     }
   };
   await env.BUCKET.put(manifestKeyFor(resourceId), JSON.stringify(manifest, null, 2), { httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "private, max-age=0" } });
   return manifest;
 }
 
-export { indexArticleResource, findArticleManifest, ARTICLE_PREFIX, VECTOR_INDEX_NAME, VECTOR_NAMESPACE, CHUNKER_VERSION };
+export { indexArticleResource, findArticleManifest, ARTICLE_PREFIX, VECTOR_INDEX_NAME, VECTOR_NAMESPACE, CHUNKER_VERSION, waitForVectorReadiness };
