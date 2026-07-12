@@ -6,7 +6,7 @@ on:
       expected_version:
         description: Expected Worker VERSION value to deploy
         required: true
-        default: 2.3.20.2-article-lazy-index
+        default: 2.3.20.3-vector-readiness
       confirm:
         description: Type DEPLOY to confirm this manual lab deploy
         required: true
