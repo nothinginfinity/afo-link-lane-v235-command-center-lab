@@ -346,6 +346,70 @@ function instantExtractiveAnswer(evidence) {
   };
 }
 
+// ==================== tier: fast -- quick LLM synthesis over lexical evidence ====================
+// Default provider: Cloudflare Workers AI's fastest/cheapest Llama model via
+// the existing env.AI binding -- zero new secret, works with no setup. If
+// env.GROQ_API_KEY is later added as a Cloudflare secret, it's used instead
+// (BYOK path -- an external Llama-class model at Groq's speed/cost, opt-in,
+// never required for default operation). Best-effort: any failure here is
+// swallowed and tier "fast" is simply skipped -- it must never block or fail
+// the turn, since tier "deep" always arrives regardless.
+const FAST_TIER_CF_MODEL = "@cf/meta/llama-3.1-8b-instruct-fast";
+const FAST_TIER_GROQ_MODEL = "llama-3.1-8b-instant";
+const FAST_TIER_GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+
+function fastTierPrompt(question, evidence) {
+  const top = evidence.slice(0, 5);
+  const system = "You are a fast draft-answer assistant. Answer ONLY using the evidence below, which comes from one document. Be concise (2-4 sentences). If the evidence doesn't clearly answer the question, say so plainly. Never use outside knowledge.";
+  const user = "Evidence:\n" + top.map(e => "[chunk " + e.chunk_index + "] " + String(e.text || "").slice(0, 700)).join("\n\n") + "\n\nQuestion: " + question;
+  return { system, user };
+}
+
+function extractChatText(result) {
+  if (typeof result === "string") return result;
+  if (result && typeof result.response === "string") return result.response;
+  if (result && typeof result.content === "string") return result.content;
+  if (result && Array.isArray(result.choices) && result.choices[0] && result.choices[0].message && typeof result.choices[0].message.content === "string") return result.choices[0].message.content;
+  return null;
+}
+
+async function generateFastAnswer(env, question, evidence) {
+  if (!evidence.length) return null;
+  const { system, user } = fastTierPrompt(question, evidence);
+  let text = null;
+  let mode = "fast-model-cf-v1";
+  try {
+    if (env.GROQ_API_KEY) {
+      const res = await fetch(FAST_TIER_GROQ_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + env.GROQ_API_KEY },
+        body: JSON.stringify({ model: FAST_TIER_GROQ_MODEL, messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: 400 })
+      });
+      if (!res.ok) throw new Error("Groq HTTP " + res.status);
+      text = extractChatText(await res.json());
+      mode = "fast-model-groq-v1";
+    } else if (env.AI) {
+      const result = await env.AI.run(FAST_TIER_CF_MODEL, { messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: 400 });
+      text = extractChatText(result);
+    } else {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  if (!text || !text.trim()) return null;
+  const top = evidence[0];
+  return {
+    direct: false,
+    kind: "synthesis",
+    mode,
+    text: text.trim().slice(0, 1200),
+    citations: top ? [top.citation] : [],
+    cited_chunk_indexes: top ? [top.chunk_index] : [],
+    resource_id: top ? top.resource_id : null
+  };
+}
+
 async function apiNodeChatTurnStream(env, request, ctx) {
   if (request.method !== "POST") return browserJson({ ok: false, error: "Method not allowed" }, 405, { Allow: "POST" });
   const blocked = browserGuard(request);
@@ -409,6 +473,13 @@ async function apiNodeChatTurnStream(env, request, ctx) {
       try { lexicalEvidence = await queryLexicalOnly(env, resourceId, sourceSha256, question, 8); } catch { /* best-effort; deep tier still runs */ }
       const instantAnswer = instantExtractiveAnswer(lexicalEvidence);
       send({ tier: "instant", kind: instantAnswer.kind, resource_id: resourceId, answer: instantAnswer, evidence: lexicalEvidence, count: lexicalEvidence.length });
+
+      // ---- tier: fast -- quick LLM draft over the same lexical evidence, no
+      // Vectorize dependency. Best-effort: silently skipped on any failure. ----
+      try {
+        const fastAnswer = await generateFastAnswer(env, question, lexicalEvidence);
+        if (fastAnswer) send({ tier: "fast", kind: fastAnswer.kind, resource_id: resourceId, answer: fastAnswer, evidence: lexicalEvidence, count: lexicalEvidence.length });
+      } catch { /* best-effort; deep tier still runs */ }
 
       // ---- tier: deep -- existing unchanged grounded-synthesis pipeline ----
       if (phaseBPromise) { try { await phaseBPromise; } catch { /* deep tier below will degrade gracefully via apiQueryPilotResource's own on-demand fallback */ } }
