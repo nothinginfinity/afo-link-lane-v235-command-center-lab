@@ -151,6 +151,35 @@ async function embed(env, texts) {
   return rows;
 }
 
+const VECTOR_READINESS_DELAYS_MS = [0, 100, 250, 500, 1000];
+
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+async function waitForVectorReadiness(env, values, expectedVectorId, resourceId, sourceSha256) {
+  let lastError = null;
+  let waitedMs = 0;
+  for (let attempt = 0; attempt < VECTOR_READINESS_DELAYS_MS.length; attempt++) {
+    const delay = VECTOR_READINESS_DELAYS_MS[attempt];
+    if (delay) { await sleep(delay); waitedMs += delay; }
+    try {
+      const result = await env.RESOURCE_VECTORS.query(values, {
+        topK: 3,
+        namespace: VECTOR_NAMESPACE,
+        filter: { resource_id: resourceId, source_sha256: sourceSha256 },
+        returnValues: false,
+        returnMetadata: "all"
+      });
+      const matches = Array.isArray(result && result.matches) ? result.matches : [];
+      const ready = matches.some(match => match && (match.id === expectedVectorId || (match.metadata && match.metadata.resource_id === resourceId && match.metadata.source_sha256 === sourceSha256)));
+      if (ready) return { attempts: attempt + 1, waited_ms: waitedMs };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  const suffix = lastError ? ": " + (lastError.message || String(lastError)) : "";
+  throw new Error("Vectorize indexing was not queryable after bounded readiness polling for " + resourceId + suffix);
+}
+
 // ==================== index + manifest ====================
 
 function manifestKeyFor(resourceId) { return ARTICLE_PREFIX + "manifests/" + resourceId + ".json"; }
@@ -229,6 +258,9 @@ async function indexArticleResource(env, resourceId, ingestId) {
     for (let index = prepared.length; index <= previousMax; index++) trailing.push("va1_" + resourceHash + "_" + pad4(index));
     for (let offset = 0; offset < trailing.length; offset += 100) await env.RESOURCE_VECTORS.deleteByIds(trailing.slice(offset, offset + 100));
   }
+
+  if (!readinessValues || !prepared[0]) throw new Error("Vector readiness probe could not be prepared for " + resourceId);
+  const readiness = await waitForVectorReadiness(env, readinessValues, prepared[0].vector_id, resourceId, sourceSha256);
 
   const manifest = {
     resource_id: resourceId, resource_type: "article", sha256: sourceSha256, text_key: textKey, text_sha256: textSha256,
