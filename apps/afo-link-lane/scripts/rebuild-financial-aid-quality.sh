@@ -18,13 +18,25 @@ while IFS='|' read -r RESOURCE_ID SOURCE_URL EXPECTED_SHA
   TXT_PATH="${WORK_DIR}/${RESOURCE_ID}.txt"
   PAYLOAD_PATH="${WORK_DIR}/${RESOURCE_ID}.json"
 
-  curl -fL --retry 4 --retry-all-errors --connect-timeout 20 --max-time 240 \
-    -A 'Mozilla/5.0 (compatible; AFOLinkLaneLabReadingOrder/2.0)' \
-    -H 'Accept: application/pdf' \
-    "${SOURCE_URL}" -o "${PDF_PATH}"
+  DOWNLOAD_OK=0
+  for DOWNLOAD_ATTEMPT in $(seq 1 6)
+  do
+    rm -f "${PDF_PATH}"
+    HTTP_CODE="$(curl -sS -L --connect-timeout 20 --max-time 240 \
+      -A 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126 Safari/537.36' \
+      -H 'Accept: application/pdf,application/octet-stream;q=0.9,*/*;q=0.1' \
+      -H 'Accept-Language: en-US,en;q=0.9' \
+      -o "${PDF_PATH}" -w '%{http_code}' "${SOURCE_URL}" || true)"
+    echo "Source download attempt ${DOWNLOAD_ATTEMPT} for ${RESOURCE_ID}: HTTP ${HTTP_CODE}"
+    if [ "${HTTP_CODE}" = "200" ] && [ -s "${PDF_PATH}" ] && [ "$(head -c 5 "${PDF_PATH}")" = "%PDF-" ]; then
+      DOWNLOAD_OK=1
+      break
+    fi
+    sleep $((DOWNLOAD_ATTEMPT * 5))
+  done
 
-  if [ "$(head -c 5 "${PDF_PATH}")" != "%PDF-" ]; then
-    echo "Downloaded resource is not a PDF: ${RESOURCE_ID}"
+  if [ "${DOWNLOAD_OK}" != "1" ]; then
+    echo "Unable to download a valid PDF after retries: ${RESOURCE_ID}"
     exit 1
   fi
 
