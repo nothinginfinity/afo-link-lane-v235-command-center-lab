@@ -3,7 +3,7 @@ import { apiNodeChatTurn, apiNodeChatTurnStream } from "./resource-node-chat.js"
 import { renderNodeChatDebugPage } from "./debug-node-chat.js";
 import { backfillFts } from "./article-index.js";
 
-const VERSION = "2.3.20.4-lexical-fts-streaming-instant";
+const VERSION = "2.3.20.5-fast-tier-cf-llama";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const R2_PREFIX = "link-lane/og-images/";
