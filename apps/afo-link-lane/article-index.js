@@ -9,6 +9,19 @@
 // already-verified Financial Aid pilot path (368/369 acceptance). The only
 // touch point into the existing pipeline is one additive lookup+fallback
 // branch in resource-retrieval.js's apiQueryPilotResource.
+//
+// Phase split (multi-tier streaming chat roadmap, step 1, corrected scope --
+// see CairnStone stones dba12b310aad / 11bc23fec615): indexing is split into
+// Phase A (fetch, extract, chunk, write R2 + resource_chunks[pending] +
+// resource_chunks_fts) and Phase B (embed, upsert Vectorize, poll readiness,
+// flip resource_chunks to 'indexed', write the completed manifest). Phase A
+// alone is enough to answer via the real D1 FTS5 lexical_only retrieval path
+// (queryLexicalOnly) -- no Vectorize dependency. indexArticleResource() below
+// remains the synchronous A-then-B orchestrator for full backward
+// compatibility with the existing single-JSON /api/resource-chat/turn
+// contract and the on-demand fallback in resource-retrieval.js; callers that
+// want the fast instant-tier path should call runPhaseA + runPhaseB
+// separately (see resource-node-chat.js's streaming handler).
 
 const ARTICLE_PREFIX = "resources/articles/";
 const VECTOR_INDEX_NAME = "afo-link-lane-v235-lab-resources-v1";
@@ -23,6 +36,7 @@ const CHUNK_OVERLAP_TOKENS = 48;
 const CHUNK_CONFIG_SHA256 = "article-plain-v1-320-448-48";
 const MAX_ARTICLE_TEXT_BYTES = 400 * 1024;
 const MAX_FETCH_HTML_BYTES = 500000;
+const FTS_BACKFILL_BATCH_SIZE = 20;
 
 // ==================== article fetch + extraction ====================
 // Deliberately self-contained (not imported from worker.js) to avoid coupling
@@ -190,7 +204,9 @@ async function findArticleManifest(env, resourceId) {
   return JSON.parse(await obj.text());
 }
 
-async function indexArticleResource(env, resourceId, ingestId) {
+// ---- Phase A: fetch, extract, chunk, write R2 + resource_chunks[pending] +
+// resource_chunks_fts. No embedding, no Vectorize call. Target 2-4s. ----
+async function runPhaseA(env, resourceId, ingestId) {
   const node = await env.DB.prepare("SELECT id,url,title,description,domain,group_name FROM links WHERE id=?").bind(resourceId).first();
   if (!node) throw new Error("Resource node not found for " + resourceId);
   if (!node.url) throw new Error("Resource node has no URL to index for " + resourceId);
@@ -216,7 +232,7 @@ async function indexArticleResource(env, resourceId, ingestId) {
     const padded = pad4(index);
     const chunkKey = ARTICLE_PREFIX + "chunks/" + sourceSha256 + "/" + padded + "-" + chunkHash.slice(0, 24) + ".txt";
     const chunkId = "ca1_" + sourceSha256.slice(0, 24) + "_" + padded + "_" + chunkHash.slice(0, 24);
-    const vectorId = "va1_" + resourceHash + "_" + padded;
+    const vectorId = "va1_" + resourceHash + "_" + padded; // deterministic -- computable before embedding exists
     const header = "Resource: " + (node.title || resourceId) + "\nPart: " + (index + 1) + " of " + rawChunks.length + "\nSource: " + node.url + "\n\n";
     const embeddingText = header + item.text;
     if (estimateTokens(embeddingText) > 512) throw new Error("Chunk exceeds model input limit for " + resourceId + " chunk " + index);
@@ -230,6 +246,33 @@ async function indexArticleResource(env, resourceId, ingestId) {
   const oldMax = await env.DB.prepare("SELECT MAX(chunk_index) AS max_chunk_index FROM resource_chunks WHERE resource_id=? AND index_state='indexed'").bind(resourceId).first();
   await env.DB.prepare("UPDATE resource_chunks SET index_state='stale', updated_at=datetime('now') WHERE resource_id=? AND index_state='indexed'").bind(resourceId).run();
   await env.DB.prepare("DELETE FROM resource_chunks WHERE resource_id=? AND source_sha256=?").bind(resourceId, sourceSha256).run();
+  await env.DB.prepare("DELETE FROM resource_chunks_fts WHERE resource_id=? AND source_sha256=?").bind(resourceId, sourceSha256).run();
+
+  // Write resource_chunks rows as 'pending' (Phase B flips them to 'indexed'
+  // once Vectorize is confirmed queryable) and populate the FTS table --
+  // this is the part that makes lexical_only retrieval usable the instant
+  // Phase A completes, independent of Phase B's state.
+  for (let offset = 0; offset < prepared.length; offset += 16) {
+    const batch = prepared.slice(offset, offset + 16);
+    const chunkStatements = batch.map(v => env.DB.prepare(
+      "INSERT INTO resource_chunks (chunk_id,vector_id,ingest_id,resource_id,source_sha256,extracted_text_sha256,chunker_version,chunk_config_sha256,chunk_index,section_title,page_start,page_end,char_start,char_end,token_count,chunk_sha256,chunk_key,vector_namespace,embedding_model,embedding_pooling,embedding_dimensions,index_state,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',datetime('now'),datetime('now'))"
+    ).bind(v.chunk_id, v.vector_id, ingestId, resourceId, sourceSha256, textSha256, CHUNKER_VERSION, CHUNK_CONFIG_SHA256, v.chunk_index, "Part " + (v.chunk_index + 1), 1, 1, v.char_start, v.char_end, v.token_count, v.chunk_sha256, v.chunk_key, VECTOR_NAMESPACE, EMBEDDING_MODEL, EMBEDDING_POOLING, EMBEDDING_DIMENSIONS));
+    const ftsStatements = batch.map(v => env.DB.prepare(
+      "INSERT INTO resource_chunks_fts (text, chunk_id, resource_id, source_sha256, chunk_index) VALUES (?,?,?,?,?)"
+    ).bind(v.text, v.chunk_id, resourceId, sourceSha256, v.chunk_index));
+    await env.DB.batch([...chunkStatements, ...ftsStatements]);
+  }
+
+  return { resource_id: resourceId, node, source_sha256: sourceSha256, text_sha256: textSha256, text_key: textKey, truncated, resource_hash: resourceHash, prepared, chunk_count: prepared.length };
+}
+
+// ---- Phase B: embed, upsert Vectorize, poll readiness, flip resource_chunks
+// to 'indexed', write the completed manifest. Slow (embedding + readiness
+// poll dominate); intended to run backgrounded via ctx.waitUntil(). ----
+async function runPhaseB(env, phaseA) {
+  const { resource_id: resourceId, node, source_sha256: sourceSha256, text_sha256: textSha256, text_key: textKey, truncated, resource_hash: resourceHash, prepared } = phaseA;
+
+  const oldMax = await env.DB.prepare("SELECT MAX(chunk_index) AS max_chunk_index FROM resource_chunks WHERE resource_id=? AND index_state='indexed' AND source_sha256!=?").bind(resourceId, sourceSha256).first();
 
   let readinessValues = null;
   for (let offset = 0; offset < prepared.length; offset += 16) {
@@ -246,11 +289,9 @@ async function indexArticleResource(env, resourceId, ingestId) {
       }
     }));
     await env.RESOURCE_VECTORS.upsert(vectors);
-    const statements = batch.map(v => env.DB.prepare(
-      "INSERT INTO resource_chunks (chunk_id,vector_id,ingest_id,resource_id,source_sha256,extracted_text_sha256,chunker_version,chunk_config_sha256,chunk_index,section_title,page_start,page_end,char_start,char_end,token_count,chunk_sha256,chunk_key,vector_namespace,embedding_model,embedding_pooling,embedding_dimensions,index_state,indexed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'indexed',datetime('now'),datetime('now'),datetime('now'))"
-    ).bind(v.chunk_id, v.vector_id, ingestId, resourceId, sourceSha256, textSha256, CHUNKER_VERSION, CHUNK_CONFIG_SHA256, v.chunk_index, "Part " + (v.chunk_index + 1), 1, 1, v.char_start, v.char_end, v.token_count, v.chunk_sha256, v.chunk_key, VECTOR_NAMESPACE, EMBEDDING_MODEL, EMBEDDING_POOLING, EMBEDDING_DIMENSIONS));
-    await env.DB.batch(statements);
   }
+
+  await env.DB.prepare("UPDATE resource_chunks SET index_state='indexed', indexed_at=datetime('now'), updated_at=datetime('now') WHERE resource_id=? AND source_sha256=?").bind(resourceId, sourceSha256).run();
 
   const previousMax = oldMax && Number.isInteger(Number(oldMax.max_chunk_index)) ? Number(oldMax.max_chunk_index) : -1;
   if (previousMax >= prepared.length) {
@@ -276,4 +317,104 @@ async function indexArticleResource(env, resourceId, ingestId) {
   return manifest;
 }
 
-export { indexArticleResource, findArticleManifest, ARTICLE_PREFIX, VECTOR_INDEX_NAME, VECTOR_NAMESPACE, CHUNKER_VERSION, waitForVectorReadiness };
+// Backward-compatible synchronous orchestrator -- runs Phase A then Phase B
+// inline and returns the completed manifest, exactly like the pre-split
+// function. Used by the existing single-JSON /api/resource-chat/turn
+// contract and the on-demand fallback in resource-retrieval.js so neither
+// changes behavior from this refactor.
+async function indexArticleResource(env, resourceId, ingestId) {
+  const phaseA = await runPhaseA(env, resourceId, ingestId);
+  return runPhaseB(env, phaseA);
+}
+
+// ==================== real D1 FTS5 lexical-only retrieval ====================
+// Genuine independent retrieval path -- no Vectorize call, usable the
+// instant Phase A completes regardless of Phase B's state. Replaces the
+// previous incorrect assumption that lexicalMetrics() in
+// resource-retrieval-quality.js already provided this (it only re-ranks
+// results Vectorize already returned; see dba12b310aad).
+
+function ftsMatchQuery(question) {
+  const words = (String(question || "").toLowerCase().match(/[a-z0-9]+/g) || []).filter(w => w.length > 1).slice(0, 24);
+  const unique = [...new Set(words)];
+  if (!unique.length) return "";
+  return unique.map(w => '"' + w.replace(/"/g, '""') + '"').join(" OR ");
+}
+
+async function queryLexicalOnly(env, resourceId, sourceSha256, question, topK) {
+  const matchQuery = ftsMatchQuery(question);
+  if (!matchQuery) return [];
+  const node = await env.DB.prepare("SELECT title,url FROM links WHERE id=?").bind(resourceId).first();
+  const limit = Math.max(1, Math.min(Number(topK) || 8, 20));
+  const rows = await env.DB.prepare(
+    "SELECT chunk_id, chunk_index, text, bm25(resource_chunks_fts) AS rank FROM resource_chunks_fts WHERE resource_chunks_fts MATCH ? AND resource_id = ? AND source_sha256 = ? ORDER BY rank LIMIT ?"
+  ).bind(matchQuery, resourceId, sourceSha256, limit).all();
+  const title = (node && node.title) || resourceId;
+  const sourceUrl = node && node.url;
+  return (rows.results || []).map(row => ({
+    // bm25() is negative-is-better in SQLite FTS5; flip sign so higher score
+    // = more relevant, matching the vector_score convention used elsewhere.
+    score: row.rank != null ? Number((-row.rank).toFixed(4)) : 0,
+    resource_id: resourceId,
+    title,
+    source_url: sourceUrl,
+    source_sha256: sourceSha256,
+    // page_start/page_end are always 1/1 for articles (no real pagination),
+    // matching the convention Phase B's Vectorize metadata already uses --
+    // kept here so evidenceBlock()/cvEvidenceCard() render lexical-only
+    // evidence with the same shape as hybrid evidence, no special-casing.
+    page_start: 1, page_end: 1,
+    chunk_index: Number(row.chunk_index),
+    chunk_id: row.chunk_id,
+    citation: "[" + title + " — part " + (Number(row.chunk_index) + 1) + "]",
+    text: row.text,
+    retrieval_mode: "lexical_only"
+  }));
+}
+
+// ==================== one-time backfill for pre-existing indexed nodes ====================
+// Populates resource_chunks_fts for chunks that were written before this
+// migration existed. Chunk text for these rows lives only in R2 (chunk_key);
+// this reads each one and inserts it into FTS. Idempotent across repeated
+// runs -- rows already present in resource_chunks_fts (by chunk_id) are
+// skipped, not re-inserted. Pass dryRun:true to size the job before running.
+async function backfillFts(env, { dryRun = false, batchSize = FTS_BACKFILL_BATCH_SIZE } = {}) {
+  const indexedRows = (await env.DB.prepare(
+    "SELECT chunk_id, resource_id, source_sha256, chunk_index, chunk_key FROM resource_chunks WHERE index_state='indexed'"
+  ).all()).results || [];
+  const existingRows = (await env.DB.prepare("SELECT chunk_id FROM resource_chunks_fts").all()).results || [];
+  const existing = new Set(existingRows.map(r => r.chunk_id));
+  const todo = indexedRows.filter(r => !existing.has(r.chunk_id));
+
+  if (dryRun) {
+    return { ok: true, dry_run: true, total_indexed_rows: indexedRows.length, already_in_fts: indexedRows.length - todo.length, to_backfill: todo.length };
+  }
+
+  let backfilled = 0;
+  const failed = [];
+  for (let offset = 0; offset < todo.length; offset += batchSize) {
+    const batch = todo.slice(offset, offset + batchSize);
+    const fetched = await Promise.all(batch.map(async row => {
+      try {
+        const obj = await env.BUCKET.get(row.chunk_key);
+        if (!obj) return { row, error: "R2 object missing for chunk_key" };
+        return { row, text: await obj.text() };
+      } catch (e) { return { row, error: e.message || String(e) }; }
+    }));
+    const statements = [];
+    for (const item of fetched) {
+      if (item.error) { failed.push({ chunk_id: item.row.chunk_id, error: item.error }); continue; }
+      statements.push(env.DB.prepare(
+        "INSERT INTO resource_chunks_fts (text, chunk_id, resource_id, source_sha256, chunk_index) VALUES (?,?,?,?,?)"
+      ).bind(item.text, item.row.chunk_id, item.row.resource_id, item.row.source_sha256, item.row.chunk_index));
+    }
+    if (statements.length) { await env.DB.batch(statements); backfilled += statements.length; }
+  }
+  return { ok: failed.length === 0, total_indexed_rows: indexedRows.length, already_in_fts: indexedRows.length - todo.length, backfilled, failed };
+}
+
+export {
+  indexArticleResource, runPhaseA, runPhaseB, findArticleManifest,
+  queryLexicalOnly, backfillFts,
+  ARTICLE_PREFIX, VECTOR_INDEX_NAME, VECTOR_NAMESPACE, CHUNKER_VERSION, waitForVectorReadiness
+};
