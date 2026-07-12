@@ -29,6 +29,7 @@ post_allow_fail() {
 echo "== 1. Direct-answer turn with valid active-node citations (PSLF) =="
 PAYLOAD='{"resource_id":"fat-pslf-infographic-pdf","question":"How many qualifying payments are required for Public Service Loan Forgiveness?"}'
 RESP1="$(post "${PAYLOAD}")"
+export RESP1
 echo "${RESP1}"
 RESP1="${RESP1}" node - <<'NODE'
 const d=JSON.parse(process.env.RESP1)
@@ -41,7 +42,9 @@ if(!Array.isArray(d.turns)||d.turns.length!==1)throw new Error('Expected exactly
 console.log('Turn 1 verified: direct='+d.answer.direct+' mode='+d.answer.mode)
 NODE
 TOKEN1="$(node -e "console.log(JSON.parse(process.env.RESP1).context_token)")"
+export TOKEN1
 TURNS1="$(node -e "console.log(JSON.stringify(JSON.parse(process.env.RESP1).turns))")"
+export TURNS1
 
 echo "== 2. Grounded follow-up using turn 1's verified history =="
 FOLLOWUP_PAYLOAD="$(node -e "
@@ -49,6 +52,7 @@ const turns=JSON.parse(process.env.TURNS1)
 process.stdout.write(JSON.stringify({resource_id:'fat-pslf-infographic-pdf',question:'Does that change if I have two part-time jobs instead of one full-time job?',turns,context_token:process.env.TOKEN1}))
 ")"
 RESP2="$(post "${FOLLOWUP_PAYLOAD}")"
+export RESP2
 echo "${RESP2}"
 RESP2="${RESP2}" node - <<'NODE'
 const d=JSON.parse(process.env.RESP2)
@@ -58,7 +62,9 @@ if(!Array.isArray(d.turns)||d.turns.length!==2)throw new Error('Expected two tur
 console.log('Follow-up verified with '+d.turns.length+' turns of history')
 NODE
 TOKEN2="$(node -e "console.log(JSON.parse(process.env.RESP2).context_token)")"
+export TOKEN2
 TURNS2="$(node -e "console.log(JSON.stringify(JSON.parse(process.env.RESP2).turns))")"
+export TURNS2
 
 echo "== 3. Wrong-node refusal: PSLF history/token replayed against a different node =="
 WRONGNODE_PAYLOAD="$(node -e "
