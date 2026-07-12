@@ -6,7 +6,7 @@ on:
       expected_version:
         description: Expected Worker VERSION value to deploy
         required: true
-        default: 2.3.19.1-node-chat-context-hardening
+        default: 2.3.19.2-node-chat-debug-harness
       confirm:
         description: Type DEPLOY to confirm this manual lab deploy
         required: true
