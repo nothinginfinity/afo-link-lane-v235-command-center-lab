@@ -43,19 +43,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Validate verification harness syntax
+      - name: Validate verification scripts
         working-directory: apps/afo-link-lane
         shell: bash
         run: |
           bash -n scripts/verify-node-chat.sh
+          node --check scripts/verify-health-version.mjs
 
       - name: Verify live Worker version
+        working-directory: apps/afo-link-lane
         shell: bash
         run: |
           set -euo pipefail
           curl --fail-with-body -sS --connect-timeout 10 --max-time 30 "${HEALTH_URL}" -o /tmp/node-chat-health.json
           cat /tmp/node-chat-health.json
-          HEALTH_JSON="$(cat /tmp/node-chat-health.json)" node -e "const d=JSON.parse(process.env.HEALTH_JSON);if(d.version!==process.env.EXPECTED_VERSION)throw new Error('Expected '+process.env.EXPECTED_VERSION+' but found '+d.version);console.log('Live Worker version verified: '+d.version)"
+          node scripts/verify-health-version.mjs /tmp/node-chat-health.json "${EXPECTED_VERSION}"
 
       - name: Run live nine-case node-chat suite
         working-directory: apps/afo-link-lane
