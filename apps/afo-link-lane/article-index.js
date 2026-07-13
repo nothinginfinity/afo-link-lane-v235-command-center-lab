@@ -255,10 +255,10 @@ async function runPhaseA(env, resourceId, ingestId) {
   for (let offset = 0; offset < prepared.length; offset += 16) {
     const batch = prepared.slice(offset, offset + 16);
     const chunkStatements = batch.map(v => env.DB.prepare(
-      "INSERT INTO resource_chunks (chunk_id,vector_id,ingest_id,resource_id,source_sha256,extracted_text_sha256,chunker_version,chunk_config_sha256,chunk_index,section_title,page_start,page_end,char_start,char_end,token_count,chunk_sha256,chunk_key,vector_namespace,embedding_model,embedding_pooling,embedding_dimensions,index_state,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',datetime('now'),datetime('now'))"
+      "INSERT OR IGNORE INTO resource_chunks (chunk_id,vector_id,ingest_id,resource_id,source_sha256,extracted_text_sha256,chunker_version,chunk_config_sha256,chunk_index,section_title,page_start,page_end,char_start,char_end,token_count,chunk_sha256,chunk_key,vector_namespace,embedding_model,embedding_pooling,embedding_dimensions,index_state,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',datetime('now'),datetime('now'))"
     ).bind(v.chunk_id, v.vector_id, ingestId, resourceId, sourceSha256, textSha256, CHUNKER_VERSION, CHUNK_CONFIG_SHA256, v.chunk_index, "Part " + (v.chunk_index + 1), 1, 1, v.char_start, v.char_end, v.token_count, v.chunk_sha256, v.chunk_key, VECTOR_NAMESPACE, EMBEDDING_MODEL, EMBEDDING_POOLING, EMBEDDING_DIMENSIONS));
     const ftsStatements = batch.map(v => env.DB.prepare(
-      "INSERT INTO resource_chunks_fts (text, chunk_id, resource_id, source_sha256, chunk_index) VALUES (?,?,?,?,?)"
+      "INSERT OR IGNORE INTO resource_chunks_fts (text, chunk_id, resource_id, source_sha256, chunk_index) VALUES (?,?,?,?,?)"
     ).bind(v.text, v.chunk_id, resourceId, sourceSha256, v.chunk_index));
     await env.DB.batch([...chunkStatements, ...ftsStatements]);
   }
@@ -405,7 +405,7 @@ async function backfillFts(env, { dryRun = false, batchSize = FTS_BACKFILL_BATCH
     for (const item of fetched) {
       if (item.error) { failed.push({ chunk_id: item.row.chunk_id, error: item.error }); continue; }
       statements.push(env.DB.prepare(
-        "INSERT INTO resource_chunks_fts (text, chunk_id, resource_id, source_sha256, chunk_index) VALUES (?,?,?,?,?)"
+        "INSERT OR IGNORE INTO resource_chunks_fts (text, chunk_id, resource_id, source_sha256, chunk_index) VALUES (?,?,?,?,?)"
       ).bind(item.text, item.row.chunk_id, item.row.resource_id, item.row.source_sha256, item.row.chunk_index));
     }
     if (statements.length) { await env.DB.batch(statements); backfilled += statements.length; }
