@@ -158,8 +158,11 @@ jobs:
           UNIVERSE_ID="$(CREATE_JSON="${CREATE_JSON}" node -e "const d=JSON.parse(process.env.CREATE_JSON);if(!d.ok||!d.universe_id.startsWith('chat-')||!d.session_id||!d.resource_id)throw new Error('Invalid create response');process.stdout.write(d.universe_id)")"
           SESSION_ID="$(CREATE_JSON="${CREATE_JSON}" node -e "process.stdout.write(JSON.parse(process.env.CREATE_JSON).session_id)")"
           RESOURCE_ID="$(CREATE_JSON="${CREATE_JSON}" node -e "process.stdout.write(JSON.parse(process.env.CREATE_JSON).resource_id)")"
-          FINALIZE_JSON="$(curl -fsS -X POST "${BASE_URL}/api/chat-universes/${UNIVERSE_ID}/finalize" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data "{\"session_id\":\"${SESSION_ID}\"}")"
-          echo "${FINALIZE_JSON}"
+          FINALIZE_HTTP="$(curl -sS -o /tmp/chat-finalize.json -w '%{http_code}' -X POST "${BASE_URL}/api/chat-universes/${UNIVERSE_ID}/finalize" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data "{\"session_id\":\"${SESSION_ID}\"}")"
+          echo "FINALIZE HTTP=${FINALIZE_HTTP}"
+          cat /tmp/chat-finalize.json
+          test "${FINALIZE_HTTP}" = "200"
+          FINALIZE_JSON="$(cat /tmp/chat-finalize.json)"
           FINALIZE_JSON="${FINALIZE_JSON}" UNIVERSE_ID="${UNIVERSE_ID}" RESOURCE_ID="${RESOURCE_ID}" node -e "const d=JSON.parse(process.env.FINALIZE_JSON);if(!d.ok||d.universe_id!==process.env.UNIVERSE_ID||d.resource_id!==process.env.RESOURCE_ID||!d.chunking?.namespace?.startsWith(process.env.UNIVERSE_ID+'--'))throw new Error('Invalid finalize boundary')"
           QUERY_JSON="$(curl -fsS -X POST "${BASE_URL}/api/chat-universes/${UNIVERSE_ID}/query" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data "{\"resource_id\":\"${RESOURCE_ID}\",\"question\":\"What is the Zephyr isolation code?\"}")"
           echo "${QUERY_JSON}"
