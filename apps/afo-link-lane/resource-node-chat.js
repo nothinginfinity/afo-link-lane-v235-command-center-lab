@@ -15,7 +15,9 @@ const CHAT_MODEL = "@cf/zai-org/glm-4.7-flash";
 const MAX_TURNS = 6;
 const MAX_HISTORY_IN_PROMPT = 3;
 const MAX_REQUEST_BYTES = 32768;
-const CONTEXT_TOKEN_SALT = "node-chat-context-v1";
+const CONTEXT_TOKEN_SALT = "node-chat-context-v2";
+const DEFAULT_UNIVERSE_ID = "default";
+function normalizeUniverseId(value) { return String(value || DEFAULT_UNIVERSE_ID).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || DEFAULT_UNIVERSE_ID; }
 const BROWSER_HEADERS = { "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer" };
 
 function browserJson(value, status = 200, extra = {}) { return new Response(JSON.stringify(value), { status, headers: { ...BROWSER_HEADERS, ...extra } }); }
@@ -66,7 +68,7 @@ function base64UrlToBuffer(str) {
 // LAB_INGEST_TOKEN (with a domain-separation salt) only if the dedicated
 // secret hasn't been provisioned yet, so this doesn't break existing
 // deploys -- but NODE_CHAT_CONTEXT_SECRET should be set before real traffic.
-const CONTEXT_TOKEN_VERSION = 1;
+const CONTEXT_TOKEN_VERSION = 2;
 const CONTEXT_TOKEN_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 async function deriveContextKey(env) {
@@ -75,44 +77,48 @@ async function deriveContextKey(env) {
   const material = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(secret) + ":" + CONTEXT_TOKEN_SALT));
   return crypto.subtle.importKey("raw", material, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
 }
-function canonicalPayload(resourceId, sessionId, turns, envelope) {
+function canonicalPayload(universeId, resourceId, sessionId, turns, envelope) {
   return JSON.stringify({
     v: envelope.v,
     iat: envelope.iat,
     exp: envelope.exp,
+    universe_id: normalizeUniverseId(universeId),
     session_id: sessionId,
     resource_id: resourceId,
     turns: turns.map(t => ({ resource_id: t.resource_id, question: t.question, answer_text: t.answer_text, direct: Boolean(t.direct), citations: t.citations }))
   });
 }
-async function signContext(env, resourceId, sessionId, turns) {
+async function signContext(env, universeId, resourceId, sessionId, turns) {
+  universeId = normalizeUniverseId(universeId);
   const key = await deriveContextKey(env);
   if (!key) return null;
   const iat = Date.now();
-  const envelope = { v: CONTEXT_TOKEN_VERSION, iat, exp: iat + CONTEXT_TOKEN_TTL_MS, resource_id: resourceId };
-  const payload = canonicalPayload(resourceId, sessionId, turns, envelope);
+  const envelope = { v: CONTEXT_TOKEN_VERSION, iat, exp: iat + CONTEXT_TOKEN_TTL_MS, universe_id: universeId, resource_id: resourceId };
+  const payload = canonicalPayload(universeId, resourceId, sessionId, turns, envelope);
   const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
   const envelopeB64 = bufferToBase64Url(new TextEncoder().encode(JSON.stringify({ ...envelope, session_id: sessionId })).buffer);
   return envelopeB64 + "." + bufferToBase64Url(sig);
 }
-async function verifyContext(env, resourceId, turns, token) {
+async function verifyContext(env, universeId, resourceId, turns, token) {
+  universeId = normalizeUniverseId(universeId);
   if (!token || typeof token !== "string" || !token.includes(".")) return { ok: false };
   const [envelopePart, sigPart] = token.split(".");
   let envelope;
   try { envelope = JSON.parse(new TextDecoder().decode(base64UrlToBuffer(envelopePart))); } catch { return { ok: false }; }
   if (!envelope || envelope.v !== CONTEXT_TOKEN_VERSION) return { ok: false, reason: "unsupported_version" };
   if (typeof envelope.exp !== "number" || Date.now() > envelope.exp) return { ok: false, reason: "expired" };
+  if (normalizeUniverseId(envelope.universe_id) !== universeId) return { ok: false, reason: "universe_mismatch" };
   if (envelope.resource_id !== resourceId) return { ok: false, reason: "resource_mismatch" };
   if (!envelope.session_id || typeof envelope.session_id !== "string") return { ok: false };
   const key = await deriveContextKey(env);
   if (!key) return { ok: false };
-  const payload = canonicalPayload(resourceId, envelope.session_id, turns, envelope);
+  const payload = canonicalPayload(universeId, resourceId, envelope.session_id, turns, envelope);
   let sigBytes;
   try { sigBytes = base64UrlToBuffer(sigPart); } catch { return { ok: false }; }
   let verified;
   try { verified = await crypto.subtle.verify("HMAC", key, sigBytes, new TextEncoder().encode(payload)); } catch { return { ok: false }; }
   if (!verified) return { ok: false };
-  return { ok: true, session_id: envelope.session_id };
+  return { ok: true, universe_id: universeId, session_id: envelope.session_id };
 }
 
 // Structural shape check only -- NOT a trust boundary. A turn passing this
@@ -240,9 +246,10 @@ async function apiNodeChatTurn(env, request) {
   if (blocked) return blocked;
   const body = await request.json().catch(() => null);
   if (!body || Array.isArray(body) || typeof body !== "object") return browserJson({ ok: false, error: "A JSON object is required" }, 400);
-  const allowedKeys = new Set(["resource_id", "question", "session_id", "turns", "context_token"]);
-  if (Object.keys(body).some(key => !allowedKeys.has(key))) return browserJson({ ok: false, error: "Only resource_id, question, session_id, turns, and context_token are accepted" }, 400);
+  const allowedKeys = new Set(["universe_id", "resource_id", "question", "session_id", "turns", "context_token"]);
+  if (Object.keys(body).some(key => !allowedKeys.has(key))) return browserJson({ ok: false, error: "Only universe_id, resource_id, question, session_id, turns, and context_token are accepted" }, 400);
 
+  const universeId = normalizeUniverseId(body.universe_id);
   const resourceId = String(body.resource_id || "").trim();
   const question = String(body.question || "").trim();
   if (question.length < 3 || question.length > 500) return browserJson({ ok: false, error: "Question must be between 3 and 500 characters" }, 400);
@@ -257,7 +264,7 @@ async function apiNodeChatTurn(env, request) {
   // forged history -- rejected outright, never fed into the model prompt.
   let sessionId;
   if (shapeCheck.turns.length) {
-    const verified = await verifyContext(env, resourceId, shapeCheck.turns, body.context_token);
+    const verified = await verifyContext(env, universeId, resourceId, shapeCheck.turns, body.context_token);
     if (!verified.ok) {
       const expired = verified.reason === "expired";
       return browserJson({ ok: false, error: expired ? "Session has expired. Start a new node chat." : "Session history could not be verified. Start a new node chat.", tampered: true, expired }, 409);
@@ -274,7 +281,7 @@ async function apiNodeChatTurn(env, request) {
   const internalRequest = new Request(request.url, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Lab-Ingest-Token": String(env.LAB_INGEST_TOKEN || "") },
-    body: JSON.stringify({ resource_id: resourceId, question, top_k: 12 })
+    body: JSON.stringify({ universe_id: universeId, resource_id: resourceId, question, top_k: 12 })
   });
   const retrievalResponse = await apiQueryPilotResource(env, internalRequest);
   let payload;
@@ -295,10 +302,11 @@ async function apiNodeChatTurn(env, request) {
 
   const newTurn = { resource_id: resourceId, question, answer_text: answer.text, direct: answer.direct, citations: answer.citations };
   const turns = [...shapeCheck.turns, newTurn].slice(-MAX_TURNS);
-  const contextToken = await signContext(env, resourceId, sessionId, turns);
+  const contextToken = await signContext(env, universeId, resourceId, sessionId, turns);
 
   return browserJson({
     ok: true,
+    universe_id: universeId,
     resource_id: resourceId,
     session_id: sessionId,
     context_token: contextToken,
@@ -427,9 +435,10 @@ async function apiNodeChatTurnStream(env, request, ctx) {
   if (blocked) return blocked;
   const body = await request.json().catch(() => null);
   if (!body || Array.isArray(body) || typeof body !== "object") return browserJson({ ok: false, error: "A JSON object is required" }, 400);
-  const allowedKeys = new Set(["resource_id", "question", "session_id", "turns", "context_token"]);
-  if (Object.keys(body).some(key => !allowedKeys.has(key))) return browserJson({ ok: false, error: "Only resource_id, question, session_id, turns, and context_token are accepted" }, 400);
+  const allowedKeys = new Set(["universe_id", "resource_id", "question", "session_id", "turns", "context_token"]);
+  if (Object.keys(body).some(key => !allowedKeys.has(key))) return browserJson({ ok: false, error: "Only universe_id, resource_id, question, session_id, turns, and context_token are accepted" }, 400);
 
+  const universeId = normalizeUniverseId(body.universe_id);
   const resourceId = String(body.resource_id || "").trim();
   const question = String(body.question || "").trim();
   if (question.length < 3 || question.length > 500) return browserJson({ ok: false, error: "Question must be between 3 and 500 characters" }, 400);
@@ -439,7 +448,7 @@ async function apiNodeChatTurnStream(env, request, ctx) {
 
   let sessionId;
   if (shapeCheck.turns.length) {
-    const verified = await verifyContext(env, resourceId, shapeCheck.turns, body.context_token);
+    const verified = await verifyContext(env, universeId, resourceId, shapeCheck.turns, body.context_token);
     if (!verified.ok) {
       const expired = verified.reason === "expired";
       return browserJson({ ok: false, error: expired ? "Session has expired. Start a new node chat." : "Session history could not be verified. Start a new node chat.", tampered: true, expired }, 409);
@@ -516,7 +525,7 @@ async function apiNodeChatTurnStream(env, request, ctx) {
       const internalRequest = new Request(request.url, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Lab-Ingest-Token": String(env.LAB_INGEST_TOKEN || "") },
-        body: JSON.stringify({ resource_id: resourceId, question, top_k: 12 })
+        body: JSON.stringify({ universe_id: universeId, resource_id: resourceId, question, top_k: 12 })
       });
       const retrievalResponse = await apiQueryPilotResource(env, internalRequest);
       let payload;
@@ -543,9 +552,9 @@ async function apiNodeChatTurnStream(env, request, ctx) {
       }
       const newTurn = { resource_id: resourceId, question, answer_text: answer.text, direct: answer.direct, citations: answer.citations };
       const turns = [...shapeCheck.turns, newTurn].slice(-MAX_TURNS);
-      const contextToken = await signContext(env, resourceId, sessionId, turns);
+      const contextToken = await signContext(env, universeId, resourceId, sessionId, turns);
       send({
-        tier: "deep", kind: answer.kind, resource_id: resourceId, session_id: sessionId, context_token: contextToken,
+        tier: "deep", kind: answer.kind, universe_id: universeId, resource_id: resourceId, session_id: sessionId, context_token: contextToken,
         ranking_version: RANKING_VERSION, chat_mode: CHAT_MODE, answer, evidence, turns, count: evidence.length
       });
     } catch (e) {
