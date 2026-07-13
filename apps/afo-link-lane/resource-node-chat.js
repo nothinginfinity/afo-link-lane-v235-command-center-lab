@@ -327,6 +327,17 @@ async function apiNodeChatTurn(env, request) {
 
 function sseEvent(obj) { return "data: " + JSON.stringify(obj) + "\n\n"; }
 
+// Financial-Aid-pilot manifest lookup -- mirrors the check apiQueryPilotResource
+// (resource-retrieval.js) itself does, so the streaming handler's instant/fast
+// gate can tell "already indexed via the pilot pipeline" apart from "genuinely
+// new, needs article lazy-indexing" instead of conflating the two.
+const PILOT_MANIFEST_PREFIX = "resources/financial-aid-toolkit/";
+async function findPilotManifest(env, resourceId) {
+  const obj = await env.BUCKET.get(PILOT_MANIFEST_PREFIX + "manifests/" + resourceId + ".json");
+  if (!obj) return null;
+  return JSON.parse(await obj.text());
+}
+
 // Fast, no-LLM extractive surface for the instant tier: just the single
 // highest-bm25-ranked lexical chunk, not a synthesized answer -- synthesis
 // (tier:"fast"/"deep") is explicitly out of scope for the instant tier.
@@ -445,41 +456,60 @@ async function apiNodeChatTurnStream(env, request, ctx) {
 
   const run = (async () => {
     try {
-      let sourceSha256;
+      let sourceSha256 = null;
       let phaseBPromise = null;
+      let lexicalTierAvailable = true;
       const manifest = await findArticleManifest(env, resourceId).catch(() => null);
       if (manifest && manifest.chunking && manifest.sha256) {
         sourceSha256 = manifest.sha256;
       } else {
-        send({ tier: "instant", kind: "indexing_started", resource_id: resourceId });
-        let phaseA;
-        try {
-          phaseA = await runPhaseA(env, resourceId, "stream-" + Date.now().toString(36));
-        } catch (e) {
-          send({ tier: "instant", kind: "error", resource_id: resourceId, error: e && e.message || String(e) });
-          send({ tier: "deep", kind: "error", resource_id: resourceId, error: "Indexing failed; deep tier unavailable this turn." });
-          return;
+        // Not indexed via the article-lazy-index pipeline. Before assuming
+        // this is a brand-new article needing fetch+extract+chunk (which
+        // fails outright for non-HTML content like PDFs), check whether it's
+        // already indexed via the separate Financial-Aid-pilot manifest --
+        // the same one apiQueryPilotResource itself checks below. Those nodes
+        // have no D1 FTS lexical coverage under this pipeline, so instant/
+        // fast tiers are skipped gracefully, but the deep tier (unchanged
+        // below) already works correctly for them.
+        const pilotManifest = await findPilotManifest(env, resourceId).catch(() => null);
+        if (pilotManifest && pilotManifest.chunking && pilotManifest.sha256) {
+          lexicalTierAvailable = false;
+          send({ tier: "instant", kind: "skipped", resource_id: resourceId, reason: "not indexed for lexical retrieval in this pipeline; deep tier will still run" });
+        } else {
+          send({ tier: "instant", kind: "indexing_started", resource_id: resourceId });
+          let phaseA;
+          try {
+            phaseA = await runPhaseA(env, resourceId, "stream-" + Date.now().toString(36));
+          } catch (e) {
+            send({ tier: "instant", kind: "error", resource_id: resourceId, error: e && e.message || String(e) });
+            send({ tier: "deep", kind: "error", resource_id: resourceId, error: "Indexing failed; deep tier unavailable this turn." });
+            return;
+          }
+          sourceSha256 = phaseA.source_sha256;
+          // Runs concurrently with the instant-tier lexical query below, not
+          // blocking it -- this is the actual "instant tier doesn't wait on
+          // Vectorize" fix. Still awaited before the deep tier needs it.
+          phaseBPromise = runPhaseB(env, phaseA);
+          ctx.waitUntil(phaseBPromise.catch(e => { console.error("Phase B background failure for " + resourceId + ": " + (e && e.message || String(e))); }));
         }
-        sourceSha256 = phaseA.source_sha256;
-        // Runs concurrently with the instant-tier lexical query below, not
-        // blocking it -- this is the actual "instant tier doesn't wait on
-        // Vectorize" fix. Still awaited before the deep tier needs it.
-        phaseBPromise = runPhaseB(env, phaseA);
-        ctx.waitUntil(phaseBPromise.catch(e => { console.error("Phase B background failure for " + resourceId + ": " + (e && e.message || String(e))); }));
       }
 
       // ---- tier: instant -- real D1 FTS5 lexical retrieval, no Vectorize ----
+      // Skipped entirely for nodes indexed only via the Financial-Aid-pilot
+      // manifest (no FTS coverage there); the deep tier below still runs.
       let lexicalEvidence = [];
-      try { lexicalEvidence = await queryLexicalOnly(env, resourceId, sourceSha256, question, 8); } catch { /* best-effort; deep tier still runs */ }
-      const instantAnswer = instantExtractiveAnswer(lexicalEvidence);
-      send({ tier: "instant", kind: instantAnswer.kind, resource_id: resourceId, answer: instantAnswer, evidence: lexicalEvidence, count: lexicalEvidence.length });
+      if (lexicalTierAvailable && sourceSha256) {
+        try { lexicalEvidence = await queryLexicalOnly(env, resourceId, sourceSha256, question, 8); } catch { /* best-effort; deep tier still runs */ }
+        const instantAnswer = instantExtractiveAnswer(lexicalEvidence);
+        send({ tier: "instant", kind: instantAnswer.kind, resource_id: resourceId, answer: instantAnswer, evidence: lexicalEvidence, count: lexicalEvidence.length });
 
-      // ---- tier: fast -- quick LLM draft over the same lexical evidence, no
-      // Vectorize dependency. Best-effort: silently skipped on any failure. ----
-      try {
-        const fastAnswer = await generateFastAnswer(env, question, lexicalEvidence);
-        if (fastAnswer) send({ tier: "fast", kind: fastAnswer.kind, resource_id: resourceId, answer: fastAnswer, evidence: lexicalEvidence, count: lexicalEvidence.length });
-      } catch { /* best-effort; deep tier still runs */ }
+        // ---- tier: fast -- quick LLM draft over the same lexical evidence, no
+        // Vectorize dependency. Best-effort: silently skipped on any failure. ----
+        try {
+          const fastAnswer = await generateFastAnswer(env, question, lexicalEvidence);
+          if (fastAnswer) send({ tier: "fast", kind: fastAnswer.kind, resource_id: resourceId, answer: fastAnswer, evidence: lexicalEvidence, count: lexicalEvidence.length });
+        } catch { /* best-effort; deep tier still runs */ }
+      }
 
       // ---- tier: deep -- existing unchanged grounded-synthesis pipeline ----
       if (phaseBPromise) { try { await phaseBPromise; } catch { /* deep tier below will degrade gracefully via apiQueryPilotResource's own on-demand fallback */ } }
