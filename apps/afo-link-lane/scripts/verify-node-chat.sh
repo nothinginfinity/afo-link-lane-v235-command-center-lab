@@ -139,6 +139,7 @@ const turns=[]
 for(let i=0;i<7;i++)turns.push({resource_id:'fat-pslf-infographic-pdf',question:'q'+i,answer_text:'a'+i})
 process.stdout.write(JSON.stringify(turns))
 ")"
+export OVERSIZED_TURNS
 OVERSIZED_PAYLOAD="$(node -e "process.stdout.write(JSON.stringify({resource_id:'fat-pslf-infographic-pdf',question:'one more please',turns:JSON.parse(process.env.OVERSIZED_TURNS)}))" )"
 HTTP_CODE="$(post_allow_fail "${OVERSIZED_PAYLOAD}")"
 echo "HTTP ${HTTP_CODE}: $(cat /tmp/node-chat-response.json)"
