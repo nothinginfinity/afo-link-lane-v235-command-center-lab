@@ -172,7 +172,7 @@ const VECTOR_READINESS_DELAYS_MS = [0, 250, 500, 1000, 2000, 4000];
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
-async function waitForVectorReadiness(env, values, expectedVectorId, resourceId, sourceSha256) {
+async function waitForVectorReadiness(env, values, expectedVectorId, resourceId, sourceSha256, universeId = DEFAULT_UNIVERSE_ID) {
   let lastError = null;
   let waitedMs = 0;
   for (let attempt = 0; attempt < VECTOR_READINESS_DELAYS_MS.length; attempt++) {
@@ -181,8 +181,8 @@ async function waitForVectorReadiness(env, values, expectedVectorId, resourceId,
     try {
       const result = await env.RESOURCE_VECTORS.query(values, {
         topK: 3,
-        namespace: VECTOR_NAMESPACE,
-        filter: { resource_id: resourceId, source_sha256: sourceSha256 },
+        namespace: vectorNamespaceFor(universeId),
+        filter: normalizeUniverseId(universeId) === DEFAULT_UNIVERSE_ID ? { resource_id: resourceId, source_sha256: sourceSha256 } : { universe_id: normalizeUniverseId(universeId), resource_id: resourceId, source_sha256: sourceSha256 },
         returnValues: false,
         returnMetadata: "all"
       });
@@ -306,7 +306,7 @@ async function runPhaseB(env, phaseA) {
   }
 
   if (!readinessValues || !prepared[0]) throw new Error("Vector readiness probe could not be prepared for " + resourceId);
-  const readiness = await waitForVectorReadiness(env, readinessValues, prepared[0].vector_id, resourceId, sourceSha256);
+  const readiness = await waitForVectorReadiness(env, readinessValues, prepared[0].vector_id, resourceId, sourceSha256, universeId);
 
   const manifest = {
     universe_id: universeId, resource_id: resourceId, resource_type: "article", sha256: sourceSha256, text_key: textKey, text_sha256: textSha256,
