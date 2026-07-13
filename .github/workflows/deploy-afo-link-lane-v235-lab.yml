@@ -116,10 +116,8 @@ jobs:
           else
             echo "Skipping CF_BROWSER_RENDERING_API_TOKEN secret refresh"
           fi
-          LAB_INGEST_TOKEN="$(openssl rand -hex 32)"
           echo "::add-mask::${LAB_INGEST_TOKEN}"
           printf '%s' "${LAB_INGEST_TOKEN}" | npx wrangler secret put LAB_INGEST_TOKEN --config wrangler.jsonc
-          echo "LAB_INGEST_TOKEN=${LAB_INGEST_TOKEN}" >> "${GITHUB_ENV}"
 
       - name: Deploy lab Worker
         working-directory: apps/afo-link-lane
