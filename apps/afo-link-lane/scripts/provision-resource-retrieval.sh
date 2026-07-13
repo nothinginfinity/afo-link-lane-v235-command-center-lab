@@ -66,7 +66,7 @@ else
   npx wrangler vectorize create "${VECTOR_INDEX}" --dimensions=768 --metric=cosine --description="AFO Link Lane lab Financial Aid Toolkit chunks" --config "${CONFIG}"
 fi
 
-for PROPERTY in resource_id source_sha256 domain resource_type
+for PROPERTY in universe_id resource_id source_sha256 domain resource_type
 do
   META_JSON="$(retry_json_command "list-metadata-index:${PROPERTY}" npx wrangler vectorize list-metadata-index "${VECTOR_INDEX}" --json --config "${CONFIG}")"
   echo "${META_JSON}"
@@ -93,13 +93,14 @@ done
 retry_json_command "list-metadata-index:final" npx wrangler vectorize list-metadata-index "${VECTOR_INDEX}" --json --config "${CONFIG}"
 npx wrangler d1 migrations apply "${D1_DATABASE}" --remote --config "${CONFIG}"
 
-SCHEMA_JSON="$(npx wrangler d1 execute "${D1_DATABASE}" --remote --json --config "${CONFIG}" --command "SELECT name, sql FROM sqlite_master WHERE name IN ('resource_chunks','idx_resource_chunks_active','idx_resource_chunks_source','idx_resource_chunks_vector') ORDER BY name")"
+SCHEMA_JSON="$(npx wrangler d1 execute "${D1_DATABASE}" --remote --json --config "${CONFIG}" --command "SELECT name, sql FROM sqlite_master WHERE name IN ('resource_chunks','resource_chunks_fts','idx_links_universe','idx_resource_chunks_universe_active','idx_resource_chunks_universe_source','idx_resource_chunks_vector') ORDER BY name")"
 echo "${SCHEMA_JSON}"
 SCHEMA_JSON="${SCHEMA_JSON}" node - <<'NODE'
 const data=JSON.parse(process.env.SCHEMA_JSON)
 const text=JSON.stringify(data)
-for(const name of ['resource_chunks','idx_resource_chunks_active','idx_resource_chunks_source','idx_resource_chunks_vector']){
+for(const name of ['resource_chunks','resource_chunks_fts','idx_links_universe','idx_resource_chunks_universe_active','idx_resource_chunks_universe_source','idx_resource_chunks_vector']){
   if(!text.includes(name))throw new Error('Missing D1 schema object '+name)
 }
-console.log('D1 resource chunk ledger verified')
+if(!text.includes('universe_id'))throw new Error('Missing universe_id partition column')
+console.log('D1 universe-partitioned resource ledger verified')
 NODE
