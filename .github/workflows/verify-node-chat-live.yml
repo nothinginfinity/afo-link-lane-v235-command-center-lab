@@ -1,0 +1,74 @@
+name: Verify Live Node Chat
+
+on:
+  workflow_dispatch:
+    inputs:
+      health_url:
+        description: Live lab health endpoint
+        required: true
+        default: https://afo-link-lane-v235-lab.jaredtechfit.workers.dev/health
+      expected_version:
+        description: Expected live Worker version
+        required: true
+        default: 2.3.20.6-content-visor-streaming-client
+      confirm:
+        description: Type VERIFY to run the live nine-case suite
+        required: true
+        default: VERIFY
+
+permissions:
+  contents: read
+
+concurrency:
+  group: afo-link-lane-v235-live-node-chat-verification
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Live nine-case node-chat verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      HEALTH_URL: ${{ inputs.health_url }}
+      EXPECTED_VERSION: ${{ inputs.expected_version }}
+    steps:
+      - name: Check manual confirmation
+        shell: bash
+        run: |
+          if [ "${{ inputs.confirm }}" != "VERIFY" ]; then
+            echo "Manual confirmation must be VERIFY"
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate verification harness syntax
+        working-directory: apps/afo-link-lane
+        shell: bash
+        run: |
+          bash -n scripts/verify-node-chat.sh
+
+      - name: Verify live Worker version
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body -sS --connect-timeout 10 --max-time 30 "${HEALTH_URL}" -o /tmp/node-chat-health.json
+          cat /tmp/node-chat-health.json
+          HEALTH_JSON="$(cat /tmp/node-chat-health.json)" node -e "const d=JSON.parse(process.env.HEALTH_JSON);if(d.version!==process.env.EXPECTED_VERSION)throw new Error('Expected '+process.env.EXPECTED_VERSION+' but found '+d.version);console.log('Live Worker version verified: '+d.version)"
+
+      - name: Run live nine-case node-chat suite
+        working-directory: apps/afo-link-lane
+        shell: bash
+        run: |
+          set -o pipefail
+          bash scripts/verify-node-chat.sh 2>&1 | tee node-chat-live-verification.log
+
+      - name: Upload full verification log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-chat-live-verification-${{ github.run_id }}
+          path: apps/afo-link-lane/node-chat-live-verification.log
+          if-no-files-found: warn
+          retention-days: 30
