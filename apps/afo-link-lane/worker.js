@@ -3,15 +3,17 @@ import { apiNodeChatTurn, apiNodeChatTurnStream } from "./resource-node-chat.js"
 import { renderNodeChatDebugPage } from "./debug-node-chat.js";
 import { backfillFts } from "./article-index.js";
 
-const VERSION = "2.3.20.7-stream-pilot-fix";
+const VERSION = "2.3.20.8-universe-partition-foundation";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
+const DEFAULT_UNIVERSE_ID = "default";
 const R2_PREFIX = "link-lane/og-images/";
 const CORS = {"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET,POST,DELETE,OPTIONS","Access-Control-Allow-Headers":"Content-Type"};
 
 const SCHEMA = [
-  "CREATE TABLE IF NOT EXISTS links (id TEXT PRIMARY KEY, url TEXT NOT NULL, title TEXT, description TEXT, domain TEXT, og_image_key TEXT, group_name TEXT, video_id TEXT, is_short INTEGER DEFAULT 0, published_at TEXT, added_at TEXT DEFAULT (datetime('now')))",
+  "CREATE TABLE IF NOT EXISTS links (id TEXT PRIMARY KEY, url TEXT NOT NULL, title TEXT, description TEXT, domain TEXT, og_image_key TEXT, group_name TEXT, video_id TEXT, is_short INTEGER DEFAULT 0, published_at TEXT, added_at TEXT DEFAULT (datetime('now')), universe_id TEXT NOT NULL DEFAULT 'default')",
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_links_url ON links(url)",
+  "CREATE INDEX IF NOT EXISTS idx_links_universe ON links(universe_id, added_at DESC)",
   "CREATE TABLE IF NOT EXISTS feed_sources (id TEXT PRIMARY KEY, feed_url TEXT NOT NULL UNIQUE, name TEXT, enabled INTEGER DEFAULT 1, max_items INTEGER DEFAULT 35, added_at TEXT DEFAULT (datetime('now')), last_sync_at TEXT, last_status TEXT, last_error TEXT, last_added INTEGER DEFAULT 0, last_skipped INTEGER DEFAULT 0)",
   "CREATE INDEX IF NOT EXISTS idx_feed_sources_enabled ON feed_sources(enabled)",
   "CREATE TABLE IF NOT EXISTS feed_sync_runs (id TEXT PRIMARY KEY, reason TEXT, started_at TEXT, finished_at TEXT, sources_checked INTEGER DEFAULT 0, items_found INTEGER DEFAULT 0, items_added INTEGER DEFAULT 0, items_skipped INTEGER DEFAULT 0, errors INTEGER DEFAULT 0)"
@@ -542,7 +544,7 @@ async function syncConfiguredFeeds(env,opts={}){
   }
   await env.DB.prepare("UPDATE feed_sync_runs SET finished_at=datetime('now'), sources_checked=?, items_found=?, items_added=?, items_skipped=?, errors=? WHERE id=?")
     .bind(sources.length,itemsFound,itemsAdded,itemsSkipped,errors,runId).run();
-  const countRow=await env.DB.prepare("SELECT COUNT(*) AS count FROM links").first();
+  const countRow=await env.DB.prepare("SELECT COUNT(*) AS count FROM links WHERE universe_id=?").bind(DEFAULT_UNIVERSE_ID).first();
   return {ok:true,version:VERSION,run_id:runId,reason,seeded_sources:seeded,sources_checked:sources.length,items_found:itemsFound,items_added:itemsAdded,items_skipped:itemsSkipped,errors,total_nodes:countRow?countRow.count:null,results};
 }
 
@@ -2359,7 +2361,7 @@ async function apiAddLink(env,req){
 }
 
 async function apiOgImage(env,id){
-  const row=await env.DB.prepare("SELECT og_image_key FROM links WHERE id=?").bind(safe(id)).first();
+  const row=await env.DB.prepare("SELECT og_image_key FROM links WHERE id=? AND universe_id=?").bind(safe(id),DEFAULT_UNIVERSE_ID).first();
   if(!row||!row.og_image_key) return new Response("Not found",{status:404});
   const obj=await env.BUCKET.get(row.og_image_key);
   if(!obj) return new Response("Not found",{status:404});
@@ -2367,9 +2369,9 @@ async function apiOgImage(env,id){
 }
 
 async function deleteLink(env,id){
-  const row=await env.DB.prepare("SELECT og_image_key FROM links WHERE id=?").bind(safe(id)).first();
+  const row=await env.DB.prepare("SELECT og_image_key FROM links WHERE id=? AND universe_id=?").bind(safe(id),DEFAULT_UNIVERSE_ID).first();
   if(row&&row.og_image_key) await env.BUCKET.delete(row.og_image_key);
-  await env.DB.prepare("DELETE FROM links WHERE id=?").bind(safe(id)).run();
+  await env.DB.prepare("DELETE FROM links WHERE id=? AND universe_id=?").bind(safe(id),DEFAULT_UNIVERSE_ID).run();
   return j({ok:true});
 }
 
@@ -2380,7 +2382,7 @@ async function apiCapturePilotResource(env,request){
   const body=await request.json().catch(()=>({}));
   const resourceId=String(body.resource_id||"").trim();
   if(!PILOT_RESOURCE_IDS.has(resourceId)) return j({ok:false,error:"Resource is not in the Financial Aid pilot allowlist"},403);
-  const row=await env.DB.prepare("SELECT id,url,title,description,domain,group_name FROM links WHERE id=?").bind(resourceId).first();
+  const row=await env.DB.prepare("SELECT id,url,title,description,domain,group_name,universe_id FROM links WHERE id=? AND universe_id=?").bind(resourceId,DEFAULT_UNIVERSE_ID).first();
   if(!row) return j({ok:false,error:"Resource node not found"},404);
   if(row.group_name!=="Financial Aid Toolkit"||row.domain!=="studentaid.gov") return j({ok:false,error:"Resource node failed group/domain policy"},403);
   let source;
@@ -2416,7 +2418,7 @@ async function apiStorePilotPdf(env,request){
   const requestUrl=new URL(request.url);
   const resourceId=String(requestUrl.searchParams.get("resource_id")||request.headers.get("X-Resource-Id")||"").trim();
   if(!PILOT_RESOURCE_IDS.has(resourceId)) return j({ok:false,error:"Resource is not in the Financial Aid pilot allowlist"},403);
-  const row=await env.DB.prepare("SELECT id,url,title,description,domain,group_name FROM links WHERE id=?").bind(resourceId).first();
+  const row=await env.DB.prepare("SELECT id,url,title,description,domain,group_name,universe_id FROM links WHERE id=? AND universe_id=?").bind(resourceId,DEFAULT_UNIVERSE_ID).first();
   if(!row) return j({ok:false,error:"Resource node not found"},404);
   if(row.group_name!=="Financial Aid Toolkit"||row.domain!=="studentaid.gov") return j({ok:false,error:"Resource node failed group/domain policy"},403);
   let source;
@@ -2501,7 +2503,7 @@ export default {
     if(method==="OPTIONS") return new Response(null,{status:204,headers:CORS});
     if(path.startsWith("/og-image/")) return apiOgImage(env,decodeURIComponent(path.slice(10)));
     if(path==="/admin"&&method==="GET"){
-      const r=await env.DB.prepare("SELECT id,url,title,domain,og_image_key,group_name,is_short FROM links ORDER BY added_at DESC LIMIT "+MAX_UNIVERSE_NODES).all();
+      const r=await env.DB.prepare("SELECT id,url,title,domain,og_image_key,group_name,is_short FROM links WHERE universe_id=? ORDER BY added_at DESC LIMIT "+MAX_UNIVERSE_NODES).bind(DEFAULT_UNIVERSE_ID).all();
       return new Response(buildAdminHTML(r.results||[]),{headers:{"Content-Type":"text/html;charset=UTF-8"}});
     }
     if(path==="/admin/add"&&method==="POST") return apiAddLink(env,request);
@@ -2525,14 +2527,14 @@ export default {
     if(path==="/admin/query-pilot-resource"&&method==="POST") return apiQueryPilotResource(env,request);
     if(path==="/admin/pilot-retrieval-status"&&method==="GET") return apiPilotRetrievalStatus(env,request);
     if(path==="/admin/backfill-fts"&&method==="POST") return apiBackfillFts(env,request);
-    if(path==="/health") return j({ok:true,worker:WORKER_NAME,version:VERSION,max_universe_nodes:MAX_UNIVERSE_NODES,r2_resource_pilot:PILOT_RESOURCE_IDS.size,resource_retrieval:{index_name:VECTOR_INDEX_NAME,namespace:"financial-aid-toolkit",embedding_model:"@cf/baai/bge-base-en-v1.5",embedding_pooling:"cls",embedding_dimensions:768,ai_binding:Boolean(env.AI),vector_binding:Boolean(env.RESOURCE_VECTORS),browser_route:"/api/resource-retrieval/query",resource_keying:"links.id",chunker_version:"pdf-page-v2-reading-order",normalizer:"pdf-reading-order-v2",ranking_version:RANKING_VERSION,answer_mode:ANSWER_MODE}});
+    if(path==="/health") return j({ok:true,worker:WORKER_NAME,version:VERSION,max_universe_nodes:MAX_UNIVERSE_NODES,r2_resource_pilot:PILOT_RESOURCE_IDS.size,universe_partition:{default_universe_id:DEFAULT_UNIVERSE_ID,namespace_strategy:"legacy-default-qualified-future-v1"},resource_retrieval:{index_name:VECTOR_INDEX_NAME,namespace:"financial-aid-toolkit",embedding_model:"@cf/baai/bge-base-en-v1.5",embedding_pooling:"cls",embedding_dimensions:768,ai_binding:Boolean(env.AI),vector_binding:Boolean(env.RESOURCE_VECTORS),browser_route:"/api/resource-retrieval/query",resource_keying:"links.id",chunker_version:"pdf-page-v2-reading-order",normalizer:"pdf-reading-order-v2",ranking_version:RANKING_VERSION,answer_mode:ANSWER_MODE}});
     if(path==="/admin/setup"&&method==="POST"){
       const results=[];
       for(const sql of SCHEMA){try{await env.DB.prepare(sql).run();results.push({ok:true});}catch(e){results.push({ok:false,error:e.message});}}
       return j({ok:true,results});
     }
     if(path==="/"||path===""){
-      const r=await env.DB.prepare("SELECT id,url,title,description,domain,og_image_key,group_name,video_id,is_short,published_at,added_at FROM links ORDER BY COALESCE(group_name,domain), added_at LIMIT "+MAX_UNIVERSE_NODES).all();
+      const r=await env.DB.prepare("SELECT id,url,title,description,domain,og_image_key,group_name,video_id,is_short,published_at,added_at FROM links WHERE universe_id=? ORDER BY COALESCE(group_name,domain), added_at LIMIT "+MAX_UNIVERSE_NODES).bind(DEFAULT_UNIVERSE_ID).all();
       const layout=layoutLinks(r.results||[]);
       return new Response(buildGameHTML(layout),{headers:{"Content-Type":"text/html;charset=UTF-8"}});
     }
