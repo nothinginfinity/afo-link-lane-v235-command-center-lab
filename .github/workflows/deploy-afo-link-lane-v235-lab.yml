@@ -170,8 +170,11 @@ jobs:
           test "${QUERY_HTTP}" = "200"
           QUERY_JSON="$(cat /tmp/chat-query.json)"
           QUERY_JSON="${QUERY_JSON}" UNIVERSE_ID="${UNIVERSE_ID}" RESOURCE_ID="${RESOURCE_ID}" node -e "const d=JSON.parse(process.env.QUERY_JSON);if(!d.ok||d.universe_id!==process.env.UNIVERSE_ID||d.resource_id!==process.env.RESOURCE_ID||d.counts.vector<1||d.counts.fts<1)throw new Error('D1/FTS/Vector chat retrieval failed');const all=[...(d.vector_evidence||[]),...(d.lexical_evidence||[])];if(all.some(x=>x.universe_id!==process.env.UNIVERSE_ID||x.resource_id!==process.env.RESOURCE_ID))throw new Error('Cross-universe evidence detected');if(!all.some(x=>String(x.text||'').includes('BLUE-ORBIT-731')))throw new Error('Expected isolated transcript evidence missing')"
-          STATUS_JSON="$(curl -fsS "${BASE_URL}/api/chat-universes/${UNIVERSE_ID}/status" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}")"
-          echo "${STATUS_JSON}"
+          STATUS_HTTP="$(curl -sS -o /tmp/chat-status.json -w '%{http_code}' "${BASE_URL}/api/chat-universes/${UNIVERSE_ID}/status" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}")"
+          echo "STATUS HTTP=${STATUS_HTTP}"
+          cat /tmp/chat-status.json
+          test "${STATUS_HTTP}" = "200"
+          STATUS_JSON="$(cat /tmp/chat-status.json)"
           STATUS_JSON="${STATUS_JSON}" node -e "const d=JSON.parse(process.env.STATUS_JSON);if(!d.ok||d.status!=='finalized'||d.counts.links!==1||d.counts.chunks<1||d.counts.fts<1||d.default_universe_resource_collisions!==0)throw new Error('Chat universe isolation status failed')"
           WRONG_CODE="$(curl -sS -o /tmp/chat-wrong-universe.json -w '%{http_code}' -X POST "${BASE_URL}/api/chat-universes/chat-wrong-universe/query" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data "{\"resource_id\":\"${RESOURCE_ID}\",\"question\":\"What is the Zephyr isolation code?\"}")"
           cat /tmp/chat-wrong-universe.json
