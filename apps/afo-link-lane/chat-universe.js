@@ -13,7 +13,8 @@ function json(value,status=200){return Response.json(value,{status,headers:{...C
 function normalizeUniverseId(value){return String(value||DEFAULT_UNIVERSE_ID).trim().toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,48)||DEFAULT_UNIVERSE_ID;}
 function newId(prefix){try{return prefix+crypto.randomUUID().replace(/-/g,"");}catch{return prefix+Date.now().toString(36)+Math.random().toString(36).slice(2,14);}}
 function constantTimeEqual(a,b){a=String(a||"");b=String(b||"");let d=a.length^b.length;for(let i=0,n=Math.max(a.length,b.length);i<n;i++)d|=(a.charCodeAt(i)||0)^(b.charCodeAt(i)||0);return d===0;}
-function requireAuth(env,request){if(!env.LAB_INGEST_TOKEN)return json({ok:false,error:"LAB_INGEST_TOKEN is not configured"},503);if(!constantTimeEqual(request.headers.get("X-Lab-Ingest-Token")||"",env.LAB_INGEST_TOKEN))return json({ok:false,error:"Unauthorized"},401);return null;}
+async function tokenFingerprint(value){if(!value)return null;const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(String(value)));return [...new Uint8Array(digest)].slice(0,6).map(v=>v.toString(16).padStart(2,"0")).join("");}
+async function requireAuth(env,request){if(!env.LAB_INGEST_TOKEN)return json({ok:false,error:"LAB_INGEST_TOKEN is not configured"},503);if(!constantTimeEqual(request.headers.get("X-Lab-Ingest-Token")||"",env.LAB_INGEST_TOKEN))return json({ok:false,error:"Unauthorized",configured_fingerprint:await tokenFingerprint(env.LAB_INGEST_TOKEN)},401);return null;}
 async function sha256Hex(value){const bytes=value instanceof ArrayBuffer?value:new TextEncoder().encode(String(value));const digest=await crypto.subtle.digest("SHA-256",bytes);return [...new Uint8Array(digest)].map(v=>v.toString(16).padStart(2,"0")).join("");}
 function estimateTokens(text){return Math.max(1,Math.ceil(new TextEncoder().encode(String(text||"")).byteLength/4));}
 function pad4(value){return String(value).padStart(4,"0");}
