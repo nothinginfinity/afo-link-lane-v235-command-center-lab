@@ -54,6 +54,10 @@ jobs:
             echo "Missing GitHub secret: CLOUDFLARE_ACCOUNT_ID"
             exit 1
           fi
+          if [ -z "${LAB_INGEST_TOKEN}" ]; then
+            echo "Missing GitHub secret: LAB_INGEST_TOKEN"
+            exit 1
+          fi
 
       - name: Checkout repo
         uses: actions/checkout@v4
