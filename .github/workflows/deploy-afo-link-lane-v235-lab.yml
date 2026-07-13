@@ -30,6 +30,7 @@ jobs:
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       WORKER_CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
       WORKER_CF_BROWSER_RENDERING_API_TOKEN: ${{ secrets.CF_BROWSER_RENDERING_API_TOKEN }}
+      LAB_INGEST_TOKEN: ${{ secrets.LAB_INGEST_TOKEN }}
       HEALTH_URL: https://afo-link-lane-v235-lab.jaredtechfit.workers.dev/health
       VECTOR_INDEX: afo-link-lane-v235-lab-resources-v1
       D1_DATABASE: afo-link-lane-v235-lab-db
