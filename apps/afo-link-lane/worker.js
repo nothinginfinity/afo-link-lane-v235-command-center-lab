@@ -2,8 +2,9 @@ import { apiIndexPilotResources, apiQueryPilotResource, apiBrowserQueryPilotReso
 import { apiNodeChatTurn, apiNodeChatTurnStream } from "./resource-node-chat.js";
 import { renderNodeChatDebugPage } from "./debug-node-chat.js";
 import { backfillFts } from "./article-index.js";
+import { routeChatUniverse } from "./chat-universe.js";
 
-const VERSION = "2.3.20.8-universe-partition-foundation";
+const VERSION = "2.3.20.9-chat-universe-prototype";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const DEFAULT_UNIVERSE_ID = "default";
@@ -11,7 +12,7 @@ const R2_PREFIX = "link-lane/og-images/";
 const CORS = {"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET,POST,DELETE,OPTIONS","Access-Control-Allow-Headers":"Content-Type"};
 
 const SCHEMA = [
-  "CREATE TABLE IF NOT EXISTS links (id TEXT PRIMARY KEY, url TEXT NOT NULL, title TEXT, description TEXT, domain TEXT, og_image_key TEXT, group_name TEXT, video_id TEXT, is_short INTEGER DEFAULT 0, published_at TEXT, added_at TEXT DEFAULT (datetime('now')), universe_id TEXT NOT NULL DEFAULT 'default')",
+  "CREATE TABLE IF NOT EXISTS links (id TEXT PRIMARY KEY, url TEXT NOT NULL, title TEXT, description TEXT, domain TEXT, og_image_key TEXT, group_name TEXT, video_id TEXT, is_short INTEGER DEFAULT 0, published_at TEXT, added_at TEXT DEFAULT (datetime('now')), universe_id TEXT NOT NULL DEFAULT 'default', resource_type TEXT NOT NULL DEFAULT 'link')",
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_links_url ON links(url)",
   "CREATE INDEX IF NOT EXISTS idx_links_universe ON links(universe_id, added_at DESC)",
   "CREATE TABLE IF NOT EXISTS feed_sources (id TEXT PRIMARY KEY, feed_url TEXT NOT NULL UNIQUE, name TEXT, enabled INTEGER DEFAULT 1, max_items INTEGER DEFAULT 35, added_at TEXT DEFAULT (datetime('now')), last_sync_at TEXT, last_status TEXT, last_error TEXT, last_added INTEGER DEFAULT 0, last_skipped INTEGER DEFAULT 0)",
@@ -2521,7 +2522,8 @@ export default {
     if(path==="/admin/index-pilot-resources"&&method==="POST") return apiIndexPilotResources(env,request);
     if(path==="/api/resource-retrieval/query"&&method==="POST") return apiBrowserQueryPilotResource(env,request);
     if(path==="/api/resource-retrieval/query") return new Response(JSON.stringify({ok:false,error:"Method not allowed"}),{status:405,headers:{...CORS,"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store","Allow":"POST"}});
-    if(path==="/api/resource-chat/turn"&&method==="POST") return url.searchParams.get("stream")==="1"?apiNodeChatTurnStream(env,request,ctx):apiNodeChatTurn(env,request);
+    const chatUniverseResponse=await routeChatUniverse(env,request,path); if(chatUniverseResponse) return chatUniverseResponse;
+if(path==="/api/resource-chat/turn"&&method==="POST") return url.searchParams.get("stream")==="1"?apiNodeChatTurnStream(env,request,ctx):apiNodeChatTurn(env,request);
     if(path==="/api/resource-chat/turn") return new Response(JSON.stringify({ok:false,error:"Method not allowed"}),{status:405,headers:{...CORS,"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store","Allow":"POST"}});
     if(path==="/debug/node-chat"&&method==="GET") return renderNodeChatDebugPage();
     if(path==="/admin/query-pilot-resource"&&method==="POST") return apiQueryPilotResource(env,request);
