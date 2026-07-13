@@ -6,7 +6,7 @@ on:
       expected_version:
         description: Expected Worker VERSION value to deploy
         required: true
-        default: 2.3.20.7-stream-pilot-fix
+        default: 2.3.20.8-universe-partition-foundation
       confirm:
         description: Type DEPLOY to confirm this manual lab deploy
         required: true
@@ -131,7 +131,7 @@ jobs:
             cat /tmp/public-health.txt || true
             if [ "${HTTP_CODE}" = "200" ]; then
               HEALTH_JSON="$(cat /tmp/public-health.txt)"
-              if HEALTH_JSON="${HEALTH_JSON}" node -e "const data=JSON.parse(process.env.HEALTH_JSON);if(data.version!==process.env.EXPECTED_VERSION)throw new Error('Unexpected public live version '+data.version);if(data.resource_retrieval?.browser_route!=='/api/resource-retrieval/query'||data.resource_retrieval?.resource_keying!=='links.id')throw new Error('Universal resource-keying health metadata missing');if(data.resource_retrieval?.chunker_version!=='pdf-page-v2-reading-order'||data.resource_retrieval?.normalizer!=='pdf-reading-order-v2'||data.resource_retrieval?.ranking_version!=='hybrid-vector-lexical-v1'||data.resource_retrieval?.answer_mode!=='extractive-evidence-v1')throw new Error('Public answer-quality metadata missing');console.log('Public live version, browser route, and answer quality verified: '+data.version);"; then
+              if HEALTH_JSON="${HEALTH_JSON}" node -e "const data=JSON.parse(process.env.HEALTH_JSON);if(data.version!==process.env.EXPECTED_VERSION)throw new Error('Unexpected public live version '+data.version);if(data.universe_partition?.default_universe_id!=='default'||data.universe_partition?.namespace_strategy!=='legacy-default-qualified-future-v1')throw new Error('Universe partition health metadata missing');if(data.resource_retrieval?.browser_route!=='/api/resource-retrieval/query'||data.resource_retrieval?.resource_keying!=='links.id')throw new Error('Universal resource-keying health metadata missing');if(data.resource_retrieval?.chunker_version!=='pdf-page-v2-reading-order'||data.resource_retrieval?.normalizer!=='pdf-reading-order-v2'||data.resource_retrieval?.ranking_version!=='hybrid-vector-lexical-v1'||data.resource_retrieval?.answer_mode!=='extractive-evidence-v1')throw new Error('Public answer-quality metadata missing');console.log('Public live version, browser route, and answer quality verified: '+data.version);"; then
                 READY=1
                 break
               fi
