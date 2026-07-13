@@ -150,8 +150,11 @@ jobs:
         run: |
           set -euo pipefail
           BASE_URL="${HEALTH_URL%/health}"
-          CREATE_JSON="$(curl -fsS -X POST "${BASE_URL}/api/chat-universes" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data '{"title":"CI isolated chat universe","turns":[{"role":"user","content":"What is the Zephyr isolation code?"},{"role":"assistant","content":"The Zephyr isolation code is BLUE-ORBIT-731 and belongs only to this test conversation."}]}')"
-          echo "${CREATE_JSON}"
+          CREATE_HTTP="$(curl -sS -o /tmp/chat-create.json -w '%{http_code}' -X POST "${BASE_URL}/api/chat-universes" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data '{"title":"CI isolated chat universe","turns":[{"role":"user","content":"What is the Zephyr isolation code?"},{"role":"assistant","content":"The Zephyr isolation code is BLUE-ORBIT-731 and belongs only to this test conversation."}]}')"
+          echo "CREATE HTTP=${CREATE_HTTP}"
+          cat /tmp/chat-create.json
+          test "${CREATE_HTTP}" = "201"
+          CREATE_JSON="$(cat /tmp/chat-create.json)"
           UNIVERSE_ID="$(CREATE_JSON="${CREATE_JSON}" node -e "const d=JSON.parse(process.env.CREATE_JSON);if(!d.ok||!d.universe_id.startsWith('chat-')||!d.session_id||!d.resource_id)throw new Error('Invalid create response');process.stdout.write(d.universe_id)")"
           SESSION_ID="$(CREATE_JSON="${CREATE_JSON}" node -e "process.stdout.write(JSON.parse(process.env.CREATE_JSON).session_id)")"
           RESOURCE_ID="$(CREATE_JSON="${CREATE_JSON}" node -e "process.stdout.write(JSON.parse(process.env.CREATE_JSON).resource_id)")"
