@@ -26,6 +26,9 @@
 const ARTICLE_PREFIX = "resources/articles/";
 const VECTOR_INDEX_NAME = "afo-link-lane-v235-lab-resources-v1";
 const VECTOR_NAMESPACE = "web-articles";
+const DEFAULT_UNIVERSE_ID = "default";
+function normalizeUniverseId(value) { return String(value || DEFAULT_UNIVERSE_ID).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || DEFAULT_UNIVERSE_ID; }
+function vectorNamespaceFor(universeId) { const normalized = normalizeUniverseId(universeId); return normalized === DEFAULT_UNIVERSE_ID ? VECTOR_NAMESPACE : normalized + "--" + VECTOR_NAMESPACE; }
 const EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5";
 const EMBEDDING_POOLING = "cls";
 const EMBEDDING_DIMENSIONS = 768;
@@ -206,8 +209,9 @@ async function findArticleManifest(env, resourceId) {
 
 // ---- Phase A: fetch, extract, chunk, write R2 + resource_chunks[pending] +
 // resource_chunks_fts. No embedding, no Vectorize call. Target 2-4s. ----
-async function runPhaseA(env, resourceId, ingestId) {
-  const node = await env.DB.prepare("SELECT id,url,title,description,domain,group_name FROM links WHERE id=?").bind(resourceId).first();
+async function runPhaseA(env, resourceId, ingestId, universeId = DEFAULT_UNIVERSE_ID) {
+  universeId = normalizeUniverseId(universeId);
+  const node = await env.DB.prepare("SELECT id,url,title,description,domain,group_name,universe_id FROM links WHERE id=? AND universe_id=?").bind(resourceId, universeId).first();
   if (!node) throw new Error("Resource node not found for " + resourceId);
   if (!node.url) throw new Error("Resource node has no URL to index for " + resourceId);
 
@@ -243,10 +247,10 @@ async function runPhaseA(env, resourceId, ingestId) {
     prepared.push({ ...item, chunk_id: chunkId, vector_id: vectorId, chunk_sha256: chunkHash, chunk_key: chunkKey, chunk_index: index, embedding_text: embeddingText });
   }
 
-  const oldMax = await env.DB.prepare("SELECT MAX(chunk_index) AS max_chunk_index FROM resource_chunks WHERE resource_id=? AND index_state='indexed'").bind(resourceId).first();
-  await env.DB.prepare("UPDATE resource_chunks SET index_state='stale', updated_at=datetime('now') WHERE resource_id=? AND index_state='indexed'").bind(resourceId).run();
-  await env.DB.prepare("DELETE FROM resource_chunks WHERE resource_id=? AND source_sha256=?").bind(resourceId, sourceSha256).run();
-  await env.DB.prepare("DELETE FROM resource_chunks_fts WHERE resource_id=? AND source_sha256=?").bind(resourceId, sourceSha256).run();
+  const oldMax = await env.DB.prepare("SELECT MAX(chunk_index) AS max_chunk_index FROM resource_chunks WHERE universe_id=? AND resource_id=? AND index_state='indexed'").bind(universeId, resourceId).first();
+  await env.DB.prepare("UPDATE resource_chunks SET index_state='stale', updated_at=datetime('now') WHERE universe_id=? AND resource_id=? AND index_state='indexed'").bind(universeId, resourceId).run();
+  await env.DB.prepare("DELETE FROM resource_chunks WHERE universe_id=? AND resource_id=? AND source_sha256=?").bind(universeId, resourceId, sourceSha256).run();
+  await env.DB.prepare("DELETE FROM resource_chunks_fts WHERE universe_id=? AND resource_id=? AND source_sha256=?").bind(universeId, resourceId, sourceSha256).run();
 
   // Write resource_chunks rows as 'pending' (Phase B flips them to 'indexed'
   // once Vectorize is confirmed queryable) and populate the FTS table --
@@ -255,24 +259,25 @@ async function runPhaseA(env, resourceId, ingestId) {
   for (let offset = 0; offset < prepared.length; offset += 16) {
     const batch = prepared.slice(offset, offset + 16);
     const chunkStatements = batch.map(v => env.DB.prepare(
-      "INSERT OR IGNORE INTO resource_chunks (chunk_id,vector_id,ingest_id,resource_id,source_sha256,extracted_text_sha256,chunker_version,chunk_config_sha256,chunk_index,section_title,page_start,page_end,char_start,char_end,token_count,chunk_sha256,chunk_key,vector_namespace,embedding_model,embedding_pooling,embedding_dimensions,index_state,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',datetime('now'),datetime('now'))"
-    ).bind(v.chunk_id, v.vector_id, ingestId, resourceId, sourceSha256, textSha256, CHUNKER_VERSION, CHUNK_CONFIG_SHA256, v.chunk_index, "Part " + (v.chunk_index + 1), 1, 1, v.char_start, v.char_end, v.token_count, v.chunk_sha256, v.chunk_key, VECTOR_NAMESPACE, EMBEDDING_MODEL, EMBEDDING_POOLING, EMBEDDING_DIMENSIONS));
+      "INSERT OR IGNORE INTO resource_chunks (chunk_id,vector_id,ingest_id,universe_id,resource_id,source_sha256,extracted_text_sha256,chunker_version,chunk_config_sha256,chunk_index,section_title,page_start,page_end,char_start,char_end,token_count,chunk_sha256,chunk_key,vector_namespace,embedding_model,embedding_pooling,embedding_dimensions,index_state,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',datetime('now'),datetime('now'))"
+    ).bind(v.chunk_id, v.vector_id, ingestId, universeId, resourceId, sourceSha256, textSha256, CHUNKER_VERSION, CHUNK_CONFIG_SHA256, v.chunk_index, "Part " + (v.chunk_index + 1), 1, 1, v.char_start, v.char_end, v.token_count, v.chunk_sha256, v.chunk_key, vectorNamespaceFor(universeId), EMBEDDING_MODEL, EMBEDDING_POOLING, EMBEDDING_DIMENSIONS));
     const ftsStatements = batch.map(v => env.DB.prepare(
-      "INSERT OR IGNORE INTO resource_chunks_fts (text, chunk_id, resource_id, source_sha256, chunk_index) VALUES (?,?,?,?,?)"
-    ).bind(v.text, v.chunk_id, resourceId, sourceSha256, v.chunk_index));
+      "INSERT OR IGNORE INTO resource_chunks_fts (text, chunk_id, universe_id, resource_id, source_sha256, chunk_index) VALUES (?,?,?,?,?,?)"
+    ).bind(v.text, v.chunk_id, universeId, resourceId, sourceSha256, v.chunk_index));
     await env.DB.batch([...chunkStatements, ...ftsStatements]);
   }
 
-  return { resource_id: resourceId, node, source_sha256: sourceSha256, text_sha256: textSha256, text_key: textKey, truncated, resource_hash: resourceHash, prepared, chunk_count: prepared.length };
+  return { universe_id: universeId, resource_id: resourceId, node, source_sha256: sourceSha256, text_sha256: textSha256, text_key: textKey, truncated, resource_hash: resourceHash, prepared, chunk_count: prepared.length };
 }
 
 // ---- Phase B: embed, upsert Vectorize, poll readiness, flip resource_chunks
 // to 'indexed', write the completed manifest. Slow (embedding + readiness
 // poll dominate); intended to run backgrounded via ctx.waitUntil(). ----
 async function runPhaseB(env, phaseA) {
-  const { resource_id: resourceId, node, source_sha256: sourceSha256, text_sha256: textSha256, text_key: textKey, truncated, resource_hash: resourceHash, prepared } = phaseA;
+  const { universe_id: universeId, resource_id: resourceId, node, source_sha256: sourceSha256, text_sha256: textSha256, text_key: textKey, truncated, resource_hash: resourceHash, prepared } = phaseA;
+  const vectorNamespace = vectorNamespaceFor(universeId);
 
-  const oldMax = await env.DB.prepare("SELECT MAX(chunk_index) AS max_chunk_index FROM resource_chunks WHERE resource_id=? AND index_state='indexed' AND source_sha256!=?").bind(resourceId, sourceSha256).first();
+  const oldMax = await env.DB.prepare("SELECT MAX(chunk_index) AS max_chunk_index FROM resource_chunks WHERE universe_id=? AND resource_id=? AND index_state='indexed' AND source_sha256!=?").bind(universeId, resourceId, sourceSha256).first();
 
   let readinessValues = null;
   for (let offset = 0; offset < prepared.length; offset += 16) {
@@ -280,9 +285,9 @@ async function runPhaseB(env, phaseA) {
     const embeddings = await embed(env, batch.map(v => v.embedding_text));
     if (!readinessValues) readinessValues = embeddings[0];
     const vectors = batch.map((v, i) => ({
-      id: v.vector_id, values: embeddings[i], namespace: VECTOR_NAMESPACE,
+      id: v.vector_id, values: embeddings[i], namespace: vectorNamespace,
       metadata: {
-        resource_id: resourceId, source_sha256: sourceSha256, domain: node.domain || "", resource_type: "article",
+        universe_id: universeId, resource_id: resourceId, source_sha256: sourceSha256, domain: node.domain || "", resource_type: "article",
         group_name: node.group_name || "", source_url: node.url, title: node.title || resourceId, section_title: "Part " + (v.chunk_index + 1),
         chunk_key: v.chunk_key, chunk_sha256: v.chunk_sha256, chunk_index: v.chunk_index, page_start: 1, page_end: 1,
         chunker_version: CHUNKER_VERSION, embedding_model: EMBEDDING_MODEL, embedding_pooling: EMBEDDING_POOLING
@@ -291,7 +296,7 @@ async function runPhaseB(env, phaseA) {
     await env.RESOURCE_VECTORS.upsert(vectors);
   }
 
-  await env.DB.prepare("UPDATE resource_chunks SET index_state='indexed', indexed_at=datetime('now'), updated_at=datetime('now') WHERE resource_id=? AND source_sha256=?").bind(resourceId, sourceSha256).run();
+  await env.DB.prepare("UPDATE resource_chunks SET index_state='indexed', indexed_at=datetime('now'), updated_at=datetime('now') WHERE universe_id=? AND resource_id=? AND source_sha256=?").bind(universeId, resourceId, sourceSha256).run();
 
   const previousMax = oldMax && Number.isInteger(Number(oldMax.max_chunk_index)) ? Number(oldMax.max_chunk_index) : -1;
   if (previousMax >= prepared.length) {
@@ -304,12 +309,12 @@ async function runPhaseB(env, phaseA) {
   const readiness = await waitForVectorReadiness(env, readinessValues, prepared[0].vector_id, resourceId, sourceSha256);
 
   const manifest = {
-    resource_id: resourceId, resource_type: "article", sha256: sourceSha256, text_key: textKey, text_sha256: textSha256,
+    universe_id: universeId, resource_id: resourceId, resource_type: "article", sha256: sourceSha256, text_key: textKey, text_sha256: textSha256,
     source_url: node.url, title: node.title || resourceId, group_name: node.group_name || "", domain: node.domain || "",
     truncated,
     chunking: {
       chunker_version: CHUNKER_VERSION, config_sha256: CHUNK_CONFIG_SHA256, chunk_count: prepared.length,
-      namespace: VECTOR_NAMESPACE, vectorize_index: VECTOR_INDEX_NAME, embedding_model: EMBEDDING_MODEL,
+      namespace: vectorNamespace, vectorize_index: VECTOR_INDEX_NAME, embedding_model: EMBEDDING_MODEL,
       embedding_pooling: EMBEDDING_POOLING, embedding_dimensions: EMBEDDING_DIMENSIONS, readiness, completed_at: new Date().toISOString()
     }
   };
@@ -322,8 +327,8 @@ async function runPhaseB(env, phaseA) {
 // function. Used by the existing single-JSON /api/resource-chat/turn
 // contract and the on-demand fallback in resource-retrieval.js so neither
 // changes behavior from this refactor.
-async function indexArticleResource(env, resourceId, ingestId) {
-  const phaseA = await runPhaseA(env, resourceId, ingestId);
+async function indexArticleResource(env, resourceId, ingestId, universeId = DEFAULT_UNIVERSE_ID) {
+  const phaseA = await runPhaseA(env, resourceId, ingestId, universeId);
   return runPhaseB(env, phaseA);
 }
 
@@ -341,14 +346,15 @@ function ftsMatchQuery(question) {
   return unique.map(w => '"' + w.replace(/"/g, '""') + '"').join(" OR ");
 }
 
-async function queryLexicalOnly(env, resourceId, sourceSha256, question, topK) {
+async function queryLexicalOnly(env, resourceId, sourceSha256, question, topK, universeId = DEFAULT_UNIVERSE_ID) {
+  universeId = normalizeUniverseId(universeId);
   const matchQuery = ftsMatchQuery(question);
   if (!matchQuery) return [];
-  const node = await env.DB.prepare("SELECT title,url FROM links WHERE id=?").bind(resourceId).first();
+  const node = await env.DB.prepare("SELECT title,url FROM links WHERE id=? AND universe_id=?").bind(resourceId, universeId).first();
   const limit = Math.max(1, Math.min(Number(topK) || 8, 20));
   const rows = await env.DB.prepare(
-    "SELECT chunk_id, chunk_index, text, bm25(resource_chunks_fts) AS rank FROM resource_chunks_fts WHERE resource_chunks_fts MATCH ? AND resource_id = ? AND source_sha256 = ? ORDER BY rank LIMIT ?"
-  ).bind(matchQuery, resourceId, sourceSha256, limit).all();
+    "SELECT chunk_id, chunk_index, text, bm25(resource_chunks_fts) AS rank FROM resource_chunks_fts WHERE resource_chunks_fts MATCH ? AND universe_id = ? AND resource_id = ? AND source_sha256 = ? ORDER BY rank LIMIT ?"
+  ).bind(matchQuery, universeId, resourceId, sourceSha256, limit).all();
   const title = (node && node.title) || resourceId;
   const sourceUrl = node && node.url;
   return (rows.results || []).map(row => ({
@@ -380,7 +386,7 @@ async function queryLexicalOnly(env, resourceId, sourceSha256, question, topK) {
 // skipped, not re-inserted. Pass dryRun:true to size the job before running.
 async function backfillFts(env, { dryRun = false, batchSize = FTS_BACKFILL_BATCH_SIZE } = {}) {
   const indexedRows = (await env.DB.prepare(
-    "SELECT chunk_id, resource_id, source_sha256, chunk_index, chunk_key FROM resource_chunks WHERE index_state='indexed'"
+    "SELECT chunk_id, universe_id, resource_id, source_sha256, chunk_index, chunk_key FROM resource_chunks WHERE index_state='indexed'"
   ).all()).results || [];
   const existingRows = (await env.DB.prepare("SELECT chunk_id FROM resource_chunks_fts").all()).results || [];
   const existing = new Set(existingRows.map(r => r.chunk_id));
@@ -405,8 +411,8 @@ async function backfillFts(env, { dryRun = false, batchSize = FTS_BACKFILL_BATCH
     for (const item of fetched) {
       if (item.error) { failed.push({ chunk_id: item.row.chunk_id, error: item.error }); continue; }
       statements.push(env.DB.prepare(
-        "INSERT OR IGNORE INTO resource_chunks_fts (text, chunk_id, resource_id, source_sha256, chunk_index) VALUES (?,?,?,?,?)"
-      ).bind(item.text, item.row.chunk_id, item.row.resource_id, item.row.source_sha256, item.row.chunk_index));
+        "INSERT OR IGNORE INTO resource_chunks_fts (text, chunk_id, universe_id, resource_id, source_sha256, chunk_index) VALUES (?,?,?,?,?,?)"
+      ).bind(item.text, item.row.chunk_id, item.row.universe_id || DEFAULT_UNIVERSE_ID, item.row.resource_id, item.row.source_sha256, item.row.chunk_index));
     }
     if (statements.length) { await env.DB.batch(statements); backfilled += statements.length; }
   }
