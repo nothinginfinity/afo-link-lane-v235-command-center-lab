@@ -166,7 +166,11 @@ jobs:
           FINALIZE_HTTP="$(curl -sS -o /tmp/chat-finalize.json -w '%{http_code}' -X POST "${BASE_URL}/api/chat-universes/${UNIVERSE_ID}/finalize" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data "{\"session_id\":\"${SESSION_ID}\"}")"
           echo "FINALIZE HTTP=${FINALIZE_HTTP}"
           cat /tmp/chat-finalize.json
-          test "${FINALIZE_HTTP}" = "200"
+          if [ "${FINALIZE_HTTP}" != "200" ]; then
+            FINALIZE_B64="$(base64 -w0 /tmp/chat-finalize.json)"
+            echo "::error title=CHAT_FINALIZE_DIAGNOSTIC_BASE64::${FINALIZE_B64}"
+            exit 1
+          fi
           FINALIZE_JSON="$(cat /tmp/chat-finalize.json)"
           FINALIZE_JSON="${FINALIZE_JSON}" UNIVERSE_ID="${UNIVERSE_ID}" RESOURCE_ID="${RESOURCE_ID}" node -e "const d=JSON.parse(process.env.FINALIZE_JSON);if(!d.ok||d.universe_id!==process.env.UNIVERSE_ID||d.resource_id!==process.env.RESOURCE_ID||!d.chunking?.namespace?.startsWith(process.env.UNIVERSE_ID+'--'))throw new Error('Invalid finalize boundary')"
           QUERY_HTTP="$(curl -sS -o /tmp/chat-query.json -w '%{http_code}' -X POST "${BASE_URL}/api/chat-universes/${UNIVERSE_ID}/query" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data "{\"resource_id\":\"${RESOURCE_ID}\",\"question\":\"What is the Zephyr isolation code?\"}")"
