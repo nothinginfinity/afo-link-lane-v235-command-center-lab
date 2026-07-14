@@ -6,7 +6,7 @@ on:
       expected_version:
         description: Expected Worker VERSION value to deploy
         required: true
-        default: 2.3.20.9.2-chat-vector-readiness
+        default: 2.3.20.9.3-chat-vector-readiness-diagnostic
       confirm:
         description: Type DEPLOY to confirm this manual lab deploy
         required: true
