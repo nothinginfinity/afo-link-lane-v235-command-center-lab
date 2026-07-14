@@ -158,6 +158,7 @@ jobs:
           CREATE_HTTP="$(curl -sS -o /tmp/chat-create.json -w '%{http_code}' -X POST "${BASE_URL}/api/chat-universes" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data '{"title":"CI isolated chat universe","turns":[{"role":"user","content":"What is the Zephyr isolation code?"},{"role":"assistant","content":"The Zephyr isolation code is BLUE-ORBIT-731 and belongs only to this test conversation."}]}')"
           echo "CREATE HTTP=${CREATE_HTTP}"
           cat /tmp/chat-create.json
+          echo "::warning file=.github/workflows/deploy-afo-link-lane-v235-lab.yml,line=151,title=CHAT_CREATE_B64::$(base64 -w0 /tmp/chat-create.json)"
           test "${CREATE_HTTP}" = "201"
           CREATE_JSON="$(cat /tmp/chat-create.json)"
           UNIVERSE_ID="$(CREATE_JSON="${CREATE_JSON}" node -e "const d=JSON.parse(process.env.CREATE_JSON);if(!d.ok||!d.universe_id.startsWith('chat-')||!d.session_id||!d.resource_id)throw new Error('Invalid create response');process.stdout.write(d.universe_id)")"
@@ -166,6 +167,7 @@ jobs:
           FINALIZE_HTTP="$(curl -sS -o /tmp/chat-finalize.json -w '%{http_code}' -X POST "${BASE_URL}/api/chat-universes/${UNIVERSE_ID}/finalize" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data "{\"session_id\":\"${SESSION_ID}\"}")"
           echo "FINALIZE HTTP=${FINALIZE_HTTP}"
           cat /tmp/chat-finalize.json
+          echo "::warning file=.github/workflows/deploy-afo-link-lane-v235-lab.yml,line=151,title=CHAT_FINALIZE_B64::$(base64 -w0 /tmp/chat-finalize.json)"
           if [ "${FINALIZE_HTTP}" != "200" ]; then
             FINALIZE_B64="$(base64 -w0 /tmp/chat-finalize.json)"
             echo "::error title=CHAT_FINALIZE_DIAGNOSTIC_BASE64::${FINALIZE_B64}"
@@ -176,20 +178,24 @@ jobs:
           QUERY_HTTP="$(curl -sS -o /tmp/chat-query.json -w '%{http_code}' -X POST "${BASE_URL}/api/chat-universes/${UNIVERSE_ID}/query" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data "{\"resource_id\":\"${RESOURCE_ID}\",\"question\":\"What is the Zephyr isolation code?\"}")"
           echo "QUERY HTTP=${QUERY_HTTP}"
           cat /tmp/chat-query.json
+          echo "::warning file=.github/workflows/deploy-afo-link-lane-v235-lab.yml,line=151,title=CHAT_QUERY_B64::$(base64 -w0 /tmp/chat-query.json)"
           test "${QUERY_HTTP}" = "200"
           QUERY_JSON="$(cat /tmp/chat-query.json)"
           QUERY_JSON="${QUERY_JSON}" UNIVERSE_ID="${UNIVERSE_ID}" RESOURCE_ID="${RESOURCE_ID}" node -e "const d=JSON.parse(process.env.QUERY_JSON);if(!d.ok||d.universe_id!==process.env.UNIVERSE_ID||d.resource_id!==process.env.RESOURCE_ID||d.counts.vector<1||d.counts.fts<1)throw new Error('D1/FTS/Vector chat retrieval failed');const all=[...(d.vector_evidence||[]),...(d.lexical_evidence||[])];if(all.some(x=>x.universe_id!==process.env.UNIVERSE_ID||x.resource_id!==process.env.RESOURCE_ID))throw new Error('Cross-universe evidence detected');if(!all.some(x=>String(x.text||'').includes('BLUE-ORBIT-731')))throw new Error('Expected isolated transcript evidence missing')"
           STATUS_HTTP="$(curl -sS -o /tmp/chat-status.json -w '%{http_code}' "${BASE_URL}/api/chat-universes/${UNIVERSE_ID}/status" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}")"
           echo "STATUS HTTP=${STATUS_HTTP}"
           cat /tmp/chat-status.json
+          echo "::warning file=.github/workflows/deploy-afo-link-lane-v235-lab.yml,line=151,title=CHAT_STATUS_B64::$(base64 -w0 /tmp/chat-status.json)"
           test "${STATUS_HTTP}" = "200"
           STATUS_JSON="$(cat /tmp/chat-status.json)"
           STATUS_JSON="${STATUS_JSON}" node -e "const d=JSON.parse(process.env.STATUS_JSON);if(!d.ok||d.status!=='finalized'||d.counts.links!==1||d.counts.chunks<1||d.counts.fts<1||d.default_universe_resource_collisions!==0)throw new Error('Chat universe isolation status failed')"
           WRONG_CODE="$(curl -sS -o /tmp/chat-wrong-universe.json -w '%{http_code}' -X POST "${BASE_URL}/api/chat-universes/chat-wrong-universe/query" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data "{\"resource_id\":\"${RESOURCE_ID}\",\"question\":\"What is the Zephyr isolation code?\"}")"
           cat /tmp/chat-wrong-universe.json
+          echo "::warning file=.github/workflows/deploy-afo-link-lane-v235-lab.yml,line=151,title=CHAT_WRONG_UNIVERSE_B64::$(base64 -w0 /tmp/chat-wrong-universe.json)"
           test "${WRONG_CODE}" = "404"
           DEFAULT_CODE="$(curl -sS -o /tmp/chat-default-universe.json -w '%{http_code}' -X POST "${BASE_URL}/api/chat-universes/default/query" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data "{\"resource_id\":\"${RESOURCE_ID}\",\"question\":\"What is the Zephyr isolation code?\"}")"
           cat /tmp/chat-default-universe.json
+          echo "::warning file=.github/workflows/deploy-afo-link-lane-v235-lab.yml,line=151,title=CHAT_DEFAULT_UNIVERSE_B64::$(base64 -w0 /tmp/chat-default-universe.json)"
           test "${DEFAULT_CODE}" = "400"
           echo "Live chat-universe positive and cross-universe negative tests passed"
 
