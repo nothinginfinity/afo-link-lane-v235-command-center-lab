@@ -1,5 +1,12 @@
 import { apiNodeChatTurn, signContext, verifyContext, MAX_TURNS } from "../resource-node-chat.js";
 import { filterPublicChatUniverses, normalizeUniverseId } from "../chat-universe.js";
+import {
+  ACTIONS,
+  ANONYMOUS_ACTOR,
+  createServiceActor,
+  DEFAULT_UNIVERSE_DESCRIPTOR,
+  authorizeUniverse
+} from "../universe-access.js";
 
 let pass = 0, fail = 0;
 function check(name, cond, detail) {
@@ -179,6 +186,77 @@ async function run() {
 
   check("normalizeUniverseId lowercases and slugifies", normalizeUniverseId("Chat 931847 EEE!") === "chat-931847-eee");
   check("normalizeUniverseId falls back to default for empty input", normalizeUniverseId("") === "default" && normalizeUniverseId(null) === "default");
+
+  // --- Step 3B: universe-access.js centralized policy contract ---
+  const visibleChatRow = { universe_id: "chat-visible1", title: "Visible Finalized", status: "finalized", ui_visible: 1 };
+  const hiddenFinalizedRow = { universe_id: "chat-hidden-finalized", title: "Hidden Finalized", status: "finalized", ui_visible: 0 };
+  const openVisibleFlagRow = { universe_id: "chat-open-visible-flag", title: "Open But Flagged", status: "open", ui_visible: 1 };
+
+  // Anonymous discover/view of default
+  let r = authorizeUniverse(ANONYMOUS_ACTOR, DEFAULT_UNIVERSE_DESCRIPTOR, ACTIONS.DISCOVER);
+  check("anonymous discovery of default is allowed", r.allowed === true && r.universe.universe_id === "default");
+  r = authorizeUniverse(ANONYMOUS_ACTOR, DEFAULT_UNIVERSE_DESCRIPTOR, ACTIONS.VIEW);
+  check("anonymous viewing of default is allowed", r.allowed === true && r.universe.type === "default");
+
+  // Anonymous discover/view of a finalized, visible chat universe
+  r = authorizeUniverse(ANONYMOUS_ACTOR, visibleChatRow, ACTIONS.DISCOVER);
+  check("anonymous discovery of finalized visible chat universe is allowed", r.allowed === true && r.universe.universe_id === "chat-visible1");
+  r = authorizeUniverse(ANONYMOUS_ACTOR, visibleChatRow, ACTIONS.VIEW);
+  check("anonymous viewing of finalized visible chat universe is allowed", r.allowed === true);
+
+  // Hidden finalized universe denied
+  r = authorizeUniverse(ANONYMOUS_ACTOR, hiddenFinalizedRow, ACTIONS.VIEW);
+  check("hidden finalized universe is denied", r.allowed === false && r.universe === null);
+
+  // Visible but non-finalized universe denied
+  r = authorizeUniverse(ANONYMOUS_ACTOR, openVisibleFlagRow, ACTIONS.VIEW);
+  check("visible but non-finalized universe is denied", r.allowed === false && r.universe === null);
+
+  // Unknown universe denied (no row at all -- e.g. a D1 lookup miss)
+  r = authorizeUniverse(ANONYMOUS_ACTOR, null, ACTIONS.VIEW);
+  check("unknown universe is denied", r.allowed === false && r.reason === "universe_not_found");
+
+  // Hidden and unknown must be indistinguishable from a public-response standpoint:
+  // both deny with universe:null, never differentiated by an inspectable field other
+  // than the internal `reason` (which callers must never surface).
+  const hiddenResult = authorizeUniverse(ANONYMOUS_ACTOR, hiddenFinalizedRow, ACTIONS.VIEW);
+  const unknownResult = authorizeUniverse(ANONYMOUS_ACTOR, null, ACTIONS.VIEW);
+  check("hidden and unknown universes produce identically-shaped public denials", hiddenResult.allowed === unknownResult.allowed && hiddenResult.universe === unknownResult.universe);
+
+  // Unknown action denied (fail closed)
+  r = authorizeUniverse(ANONYMOUS_ACTOR, visibleChatRow, "delete_everything");
+  check("unknown action is denied", r.allowed === false && r.reason === "unknown_action");
+
+  // Missing/malformed actor fails safely -- must never throw, must never silently allow
+  check("null actor on a protected action fails safely (denied, not allowed, not thrown)", authorizeUniverse(null, visibleChatRow, ACTIONS.CONTRIBUTE).allowed === false);
+  check("malformed actor object fails safely", authorizeUniverse({ bogus: true }, visibleChatRow, ACTIONS.CONTRIBUTE).allowed === false);
+  check("anonymous actor cannot contribute to a chat universe", authorizeUniverse(ANONYMOUS_ACTOR, visibleChatRow, ACTIONS.CONTRIBUTE).allowed === false);
+  check("anonymous actor cannot administer a chat universe", authorizeUniverse(ANONYMOUS_ACTOR, visibleChatRow, ACTIONS.ADMINISTER).allowed === false);
+
+  // Authenticated service actor can contribute/edit/query/administer an existing chat
+  // universe regardless of its visibility (matches today's LAB_INGEST_TOKEN-only gate)...
+  const service = createServiceActor(true);
+  check("authenticated service actor can contribute to an open chat universe", authorizeUniverse(service, openVisibleFlagRow, ACTIONS.CONTRIBUTE).allowed === true);
+  check("authenticated service actor can administer a hidden chat universe", authorizeUniverse(service, hiddenFinalizedRow, ACTIONS.ADMINISTER).allowed === true);
+  // ...but never against the default universe, and never when unauthenticated.
+  check("service actor cannot contribute to the default universe", authorizeUniverse(service, DEFAULT_UNIVERSE_DESCRIPTOR, ACTIONS.CONTRIBUTE).allowed === false);
+  check("unauthenticated service actor is denied", authorizeUniverse(createServiceActor(false), visibleChatRow, ACTIONS.EDIT).allowed === false);
+
+  // SHARE exists in the vocabulary but is not wired to any route yet -- must fail closed.
+  check("share action fails closed (not implemented yet)", authorizeUniverse(service, visibleChatRow, ACTIONS.SHARE).allowed === false);
+
+  // Public descriptor projection: only universe_id/title/type ever come back, on both
+  // allow and (where a universe is still safely nameable) deny paths.
+  const allowedProjection = authorizeUniverse(ANONYMOUS_ACTOR, visibleChatRow, ACTIONS.DISCOVER).universe;
+  check("allowed public descriptor exposes only universe_id/title/type", Object.keys(allowedProjection).sort().join(",") === "title,type,universe_id");
+  const deniedWithActorContext = authorizeUniverse(ANONYMOUS_ACTOR, visibleChatRow, ACTIONS.CONTRIBUTE).universe;
+  check("denied-but-nameable descriptor still never leaks status/ui_visible", deniedWithActorContext === null || Object.keys(deniedWithActorContext).sort().join(",") === "title,type,universe_id");
+
+  // Backward compatibility: filterPublicChatUniverses (used by /api/universes and the
+  // HUD switcher embed) still enforces exactly the same rule via the new policy seam.
+  const backwardCompatRows = [visibleChatRow, hiddenFinalizedRow, openVisibleFlagRow];
+  const backwardCompatVisible = filterPublicChatUniverses(backwardCompatRows);
+  check("existing catalog output remains backward-compatible after routing through authorizeUniverse", backwardCompatVisible.length === 1 && backwardCompatVisible[0].universe_id === "chat-visible1");
 
   console.log("\n" + pass + " passed, " + fail + " failed");
   if (fail > 0) process.exit(1);
