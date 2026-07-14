@@ -6,7 +6,7 @@ on:
       expected_version:
         description: Expected Worker VERSION value to deploy
         required: true
-        default: 2.3.20.9-chat-universe-prototype
+        default: 2.3.20.9.1-chat-auth-await-fix
       confirm:
         description: Type DEPLOY to confirm this manual lab deploy
         required: true
