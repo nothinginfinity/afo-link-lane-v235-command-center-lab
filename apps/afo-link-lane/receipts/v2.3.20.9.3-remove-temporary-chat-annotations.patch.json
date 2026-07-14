@@ -1,0 +1,113 @@
+{
+  "worker": "afo-gitzip",
+  "version": "0.2.2-unified",
+  "action": "apply_repo_text_patch",
+  "target": {
+    "owner": "nothinginfinity",
+    "repo": "afo-link-lane-v235-command-center-lab",
+    "branch": "main",
+    "path": ".github/workflows/deploy-afo-link-lane-v235-lab.yml"
+  },
+  "source_sha": "8cc58fc1dde87c84408e656c3e065a9d0272d0df",
+  "result_sha": "89af738b2a904ef261aa4dbe3ded312c4842764b",
+  "commit_sha": "8e757cd3d660ed578e1e59bf0869616e3a870b90",
+  "diff": {
+    "before_length": 19209,
+    "after_length": 18071,
+    "delta": -1138,
+    "common_prefix": 8229,
+    "common_suffix": 5831,
+    "before_fingerprint": "da05b9a9",
+    "after_fingerprint": "9aaf94c9"
+  },
+  "applied": [
+    {
+      "label": "op_0",
+      "type": "replace_exact",
+      "changed": true,
+      "replaced": 1
+    },
+    {
+      "label": "op_1",
+      "type": "replace_exact",
+      "changed": true,
+      "replaced": 1
+    },
+    {
+      "label": "op_2",
+      "type": "replace_exact",
+      "changed": true,
+      "replaced": 1
+    },
+    {
+      "label": "op_3",
+      "type": "replace_exact",
+      "changed": true,
+      "replaced": 1
+    },
+    {
+      "label": "op_4",
+      "type": "replace_exact",
+      "changed": true,
+      "replaced": 1
+    },
+    {
+      "label": "op_5",
+      "type": "replace_exact",
+      "changed": true,
+      "replaced": 1
+    }
+  ],
+  "verification": {
+    "ok": true,
+    "results": [
+      {
+        "label": "not_contains",
+        "ok": true,
+        "detail": "absent"
+      },
+      {
+        "label": "not_contains",
+        "ok": true,
+        "detail": "absent"
+      },
+      {
+        "label": "not_contains",
+        "ok": true,
+        "detail": "absent"
+      },
+      {
+        "label": "not_contains",
+        "ok": true,
+        "detail": "absent"
+      },
+      {
+        "label": "not_contains",
+        "ok": true,
+        "detail": "absent"
+      },
+      {
+        "label": "not_contains",
+        "ok": true,
+        "detail": "absent"
+      },
+      {
+        "label": "not_contains",
+        "ok": true,
+        "detail": "absent"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      },
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      }
+    ],
+    "failed": []
+  },
+  "timestamp": "2026-07-14T01:06:56.199Z"
+}
