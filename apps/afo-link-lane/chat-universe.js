@@ -7,7 +7,7 @@ const CHUNKER_VERSION = "chat-transcript-v1";
 const MAX_TURNS = 100;
 const MAX_TURN_CHARS = 12000;
 const MAX_TRANSCRIPT_CHARS = 400000;
-const VECTOR_READINESS_DELAYS_MS = [0,250,500,1000,2000,4000];
+const VECTOR_READINESS_DELAYS_MS = [0,250,500,1000,2000,4000,8000,16000,32000];
 const CORS = {"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"GET,POST,OPTIONS","Access-Control-Allow-Headers":"Content-Type,X-Lab-Ingest-Token"};
 
 function json(value,status=200){return Response.json(value,{status,headers:{...CORS,"Cache-Control":"no-store"}});}
