@@ -6,7 +6,7 @@ on:
       expected_version:
         description: Expected Worker VERSION value to deploy
         required: true
-        default: 2.3.20.10-universe-ui-switcher
+        default: 2.3.20.11-universe-access-policy
       confirm:
         description: Type DEPLOY to confirm this manual lab deploy
         required: true
@@ -85,6 +85,7 @@ jobs:
           node --check resource-retrieval-quality.js
           node --check resource-node-chat.js
           node --check chat-universe.js
+          node --check universe-access.js
           node scripts/node-chat-unit-tests.mjs
           bash -n scripts/rebuild-financial-aid-quality.sh
           bash -n scripts/verify-resource-retrieval.sh
