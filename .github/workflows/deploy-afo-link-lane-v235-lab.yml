@@ -6,7 +6,7 @@ on:
       expected_version:
         description: Expected Worker VERSION value to deploy
         required: true
-        default: 2.3.20.9.4-chat-vector-readiness-bounded
+        default: 2.3.20.10-universe-ui-switcher
       confirm:
         description: Type DEPLOY to confirm this manual lab deploy
         required: true
@@ -95,7 +95,7 @@ jobs:
         working-directory: apps/afo-link-lane
         shell: bash
         run: |
-          node -e "const fs=require('fs');const expected=process.env.EXPECTED_VERSION;const src=fs.readFileSync('worker.js','utf8');const match=src.match(/const VERSION\\s*=\\s*\"([^\"]+)\"/);if(!match)throw new Error('VERSION not found');console.log('Worker VERSION='+match[1]);if(match[1]!==expected)throw new Error('Expected '+expected+' but found '+match[1]);"
+          node -e "const fs=require('fs');const expected=process.env.EXPECTED_VERSION;const src=fs.readFileSync('worker.js','utf8');const match=src.match(/const VERSION\s*=\s*\"([^\"]+)\"/);if(!match)throw new Error('VERSION not found');console.log('Worker VERSION='+match[1]);if(match[1]!==expected)throw new Error('Expected '+expected+' but found '+match[1]);"
 
       - name: Provision Vectorize metadata and D1 chunk ledger
         working-directory: apps/afo-link-lane
@@ -188,6 +188,63 @@ jobs:
           cat /tmp/chat-default-universe.json
           test "${DEFAULT_CODE}" = "400"
           echo "Live chat-universe positive and cross-universe negative tests passed"
+
+      - name: Verify live Step 3A universe switcher (catalog, load, isolation, negative boundaries)
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_URL="${HEALTH_URL%/health}"
+
+          CATALOG_HTTP="$(curl -sS -o /tmp/universes-before.json -w '%{http_code}' "${BASE_URL}/api/universes")"
+          test "${CATALOG_HTTP}" = "200"
+          node -e "const fs=require('fs');const d=JSON.parse(fs.readFileSync('/tmp/universes-before.json','utf8'));if(!d.ok||!Array.isArray(d.universes)||!d.universes.some(u=>u.universe_id==='default'&&u.type==='default'))throw new Error('Default universe missing from public catalog')"
+
+          CREATE_HTTP="$(curl -sS -o /tmp/switch-create.json -w '%{http_code}' -X POST "${BASE_URL}/api/chat-universes" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data '{"title":"CI Step 3A Visible Universe","turns":[{"role":"user","content":"What color is the switcher marker?"},{"role":"assistant","content":"The switcher marker color is GREEN-SWITCH-204."}]}')"
+          test "${CREATE_HTTP}" = "201"
+          CREATE_JSON="$(cat /tmp/switch-create.json)"
+          VIS_UNIVERSE_ID="$(CREATE_JSON="${CREATE_JSON}" node -e "process.stdout.write(JSON.parse(process.env.CREATE_JSON).universe_id)")"
+          VIS_SESSION_ID="$(CREATE_JSON="${CREATE_JSON}" node -e "process.stdout.write(JSON.parse(process.env.CREATE_JSON).session_id)")"
+          FINALIZE_HTTP="$(curl -sS -o /tmp/switch-finalize.json -w '%{http_code}' -X POST "${BASE_URL}/api/chat-universes/${VIS_UNIVERSE_ID}/finalize" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data "{\"session_id\":\"${VIS_SESSION_ID}\",\"ui_visible\":true}")"
+          test "${FINALIZE_HTTP}" = "200"
+          FINALIZE_JSON="$(cat /tmp/switch-finalize.json)"
+          FINALIZE_JSON="${FINALIZE_JSON}" node -e "const d=JSON.parse(process.env.FINALIZE_JSON);if(d.ui_visible!==true)throw new Error('Expected finalize with ui_visible:true to persist as visible')"
+
+          HIDDEN_CREATE_HTTP="$(curl -sS -o /tmp/hidden-create.json -w '%{http_code}' -X POST "${BASE_URL}/api/chat-universes" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data '{"title":"CI Step 3A Hidden Universe","turns":[{"role":"user","content":"hidden probe"},{"role":"assistant","content":"hidden probe answer"}]}')"
+          test "${HIDDEN_CREATE_HTTP}" = "201"
+          HIDDEN_JSON="$(cat /tmp/hidden-create.json)"
+          HIDDEN_UNIVERSE_ID="$(HIDDEN_JSON="${HIDDEN_JSON}" node -e "process.stdout.write(JSON.parse(process.env.HIDDEN_JSON).universe_id)")"
+          HIDDEN_SESSION_ID="$(HIDDEN_JSON="${HIDDEN_JSON}" node -e "process.stdout.write(JSON.parse(process.env.HIDDEN_JSON).session_id)")"
+          HIDDEN_FINALIZE_HTTP="$(curl -sS -o /tmp/hidden-finalize.json -w '%{http_code}' -X POST "${BASE_URL}/api/chat-universes/${HIDDEN_UNIVERSE_ID}/finalize" -H "Content-Type: application/json" -H "X-Lab-Ingest-Token: ${LAB_INGEST_TOKEN}" --data "{\"session_id\":\"${HIDDEN_SESSION_ID}\"}")"
+          test "${HIDDEN_FINALIZE_HTTP}" = "200"
+          HIDDEN_FINALIZE_JSON="$(cat /tmp/hidden-finalize.json)"
+          HIDDEN_FINALIZE_JSON="${HIDDEN_FINALIZE_JSON}" node -e "const d=JSON.parse(process.env.HIDDEN_FINALIZE_JSON);if(d.ui_visible!==false)throw new Error('Expected finalize without ui_visible to default to hidden')"
+
+          CATALOG_HTTP2="$(curl -sS -o /tmp/universes-after.json -w '%{http_code}' "${BASE_URL}/api/universes")"
+          test "${CATALOG_HTTP2}" = "200"
+          VIS_UNIVERSE_ID="${VIS_UNIVERSE_ID}" HIDDEN_UNIVERSE_ID="${HIDDEN_UNIVERSE_ID}" node -e "
+            const fs=require('fs');const d=JSON.parse(fs.readFileSync('/tmp/universes-after.json','utf8'));
+            const ids=d.universes.map(u=>u.universe_id);
+            if(!ids.includes(process.env.VIS_UNIVERSE_ID))throw new Error('Visible universe missing from public catalog');
+            if(ids.includes(process.env.HIDDEN_UNIVERSE_ID))throw new Error('Hidden universe leaked into public catalog');
+          "
+
+          LOAD_HTTP="$(curl -sS -o /tmp/load-visible.html -w '%{http_code}' "${BASE_URL}/?universe_id=${VIS_UNIVERSE_ID}")"
+          test "${LOAD_HTTP}" = "200"
+          grep -qF "universeSwitcherPanel" /tmp/load-visible.html
+          grep -qF "CI Step 3A Visible Universe" /tmp/load-visible.html
+          grep -qF "universeItem active" /tmp/load-visible.html
+
+          UNKNOWN_HTTP="$(curl -sS -o /tmp/load-unknown.html -w '%{http_code}' "${BASE_URL}/?universe_id=chat-does-not-exist-ci")"
+          test "${UNKNOWN_HTTP}" = "404"
+          HIDDEN_LOAD_HTTP="$(curl -sS -o /tmp/load-hidden.html -w '%{http_code}' "${BASE_URL}/?universe_id=${HIDDEN_UNIVERSE_ID}")"
+          test "${HIDDEN_LOAD_HTTP}" = "404"
+
+          DEFAULT_HTTP="$(curl -sS -o /tmp/load-default.html -w '%{http_code}' "${BASE_URL}/")"
+          test "${DEFAULT_HTTP}" = "200"
+          if grep -qF "chat://${VIS_UNIVERSE_ID}/" /tmp/load-default.html; then echo "Chat node leaked into default universe layout"; exit 1; fi
+          if grep -qF "GREEN-SWITCH-204" /tmp/load-default.html; then echo "Chat transcript content leaked into default universe page"; exit 1; fi
+
+          echo "Step 3A universe switcher catalog, load, isolation, and negative-boundary checks passed"
 
       - name: Legacy PDF recapture disabled for retrieval-only slice
         if: ${{ false }}
