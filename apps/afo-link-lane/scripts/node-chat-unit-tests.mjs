@@ -8,6 +8,12 @@ import {
   authorizeUniverse
 } from "../universe-access.js";
 
+function makeFakeDB(row) {
+  // Minimal stand-in for env.DB: only implements prepare().bind().first(),
+  // which is all authorizeChatQuery's single lookup query needs.
+  return { prepare() { return { bind() { return { first: async () => row }; } }; } };
+}
+
 let pass = 0, fail = 0;
 function check(name, cond, detail) {
   if (cond) { pass++; console.log("PASS:", name); }
@@ -257,6 +263,70 @@ async function run() {
   const backwardCompatRows = [visibleChatRow, hiddenFinalizedRow, openVisibleFlagRow];
   const backwardCompatVisible = filterPublicChatUniverses(backwardCompatRows);
   check("existing catalog output remains backward-compatible after routing through authorizeUniverse", backwardCompatVisible.length === 1 && backwardCompatVisible[0].universe_id === "chat-visible1");
+
+  // --- Step 3C: QUERY policy branch (anonymous browser-safe active-universe query) ---
+  r = authorizeUniverse(ANONYMOUS_ACTOR, DEFAULT_UNIVERSE_DESCRIPTOR, ACTIONS.QUERY);
+  check("anonymous can query the default universe", r.allowed === true);
+  r = authorizeUniverse(ANONYMOUS_ACTOR, visibleChatRow, ACTIONS.QUERY);
+  check("anonymous can query a finalized visible chat universe", r.allowed === true);
+  r = authorizeUniverse(ANONYMOUS_ACTOR, hiddenFinalizedRow, ACTIONS.QUERY);
+  check("anonymous cannot query a hidden finalized chat universe", r.allowed === false);
+  r = authorizeUniverse(ANONYMOUS_ACTOR, openVisibleFlagRow, ACTIONS.QUERY);
+  check("anonymous cannot query a visible-but-non-finalized chat universe", r.allowed === false);
+  r = authorizeUniverse(ANONYMOUS_ACTOR, null, ACTIONS.QUERY);
+  check("anonymous cannot query an unknown universe", r.allowed === false);
+  check("service actor can still query any existing chat universe regardless of visibility (unchanged pre-3C behavior)", authorizeUniverse(service, hiddenFinalizedRow, ACTIONS.QUERY).allowed === true);
+  check("service actor can query the default universe", authorizeUniverse(service, DEFAULT_UNIVERSE_DESCRIPTOR, ACTIONS.QUERY).allowed === true);
+
+  // --- Step 3C: apiNodeChatTurn's live authorization gate ---
+  // Unknown universe -> generic 404, before any retrieval is attempted.
+  res = await apiNodeChatTurn(
+    { LAB_INGEST_TOKEN: "t", DB: makeFakeDB(null) },
+    makeRequest({ universe_id: "chat-unknown-ci", resource_id: "chat-transcript-x", question: "What was discussed?" })
+  );
+  j = await res.clone().json();
+  check("unknown universe_id is rejected with a generic 404 before retrieval", res.status === 404 && j.error === "Not found");
+
+  // Hidden (finalized but ui_visible=0) universe -> same generic 404, never
+  // distinguishable from "unknown" in the response.
+  res = await apiNodeChatTurn(
+    { LAB_INGEST_TOKEN: "t", DB: makeFakeDB({ universe_id: "chat-hidden-ci", title: "Hidden", status: "finalized", ui_visible: 0 }) },
+    makeRequest({ universe_id: "chat-hidden-ci", resource_id: "chat-transcript-x", question: "What was discussed?" })
+  );
+  j = await res.clone().json();
+  check("hidden chat universe is rejected with the same generic 404 as unknown", res.status === 404 && j.error === "Not found");
+
+  // Non-finalized universe -> same generic 404.
+  res = await apiNodeChatTurn(
+    { LAB_INGEST_TOKEN: "t", DB: makeFakeDB({ universe_id: "chat-open-ci", title: "Open", status: "open", ui_visible: 1 }) },
+    makeRequest({ universe_id: "chat-open-ci", resource_id: "chat-transcript-x", question: "What was discussed?" })
+  );
+  j = await res.clone().json();
+  check("non-finalized chat universe is rejected with a generic 404", res.status === 404 && j.error === "Not found");
+
+  // Finalized + visible universe -> passes the new gate (proceeds past 404 to
+  // the existing binding-check 503, proving the gate let it through rather
+  // than silently short-circuiting every request).
+  res = await apiNodeChatTurn(
+    { LAB_INGEST_TOKEN: "t", DB: makeFakeDB({ universe_id: "chat-visible-ci", title: "Visible", status: "finalized", ui_visible: 1 }) },
+    makeRequest({ universe_id: "chat-visible-ci", resource_id: "chat-transcript-x", question: "What was discussed?" })
+  );
+  check("finalized visible chat universe passes the gate and reaches downstream retrieval (not the gate's 404)", res.status !== 404);
+
+  // Default universe (the overwhelmingly common case, and every pre-existing
+  // test above) never touches env.DB at all -- confirmed by a fake DB that
+  // throws if queried; the default fast-path must not call it.
+  const explodingDB = { prepare() { throw new Error("DB should not be queried for the default universe"); } };
+  let explodingDbTouched = false;
+  try {
+    await apiNodeChatTurn(
+      { LAB_INGEST_TOKEN: "t", DB: explodingDB },
+      makeRequest({ resource_id: "fat-pslf-infographic-pdf", question: "How many payments does PSLF require?" })
+    );
+  } catch (e) {
+    if (String(e && e.message).includes("should not be queried")) explodingDbTouched = true;
+  }
+  check("default universe requests never touch env.DB in the authorization gate", explodingDbTouched === false);
 
   console.log("\n" + pass + " passed, " + fail + " failed");
   if (fail > 0) process.exit(1);
