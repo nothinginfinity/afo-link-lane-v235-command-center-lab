@@ -31,17 +31,20 @@ function serializeTranscript(title,sessionId,turns){const lines=["Chat Universe 
 function chunkTranscript(text){const target=1280,hard=1792,overlap=192,chunks=[];let start=0;while(start<text.length){while(start<text.length&&/\s/.test(text[start]))start++;if(start>=text.length)break;let end=Math.min(text.length,start+target);const hardEnd=Math.min(text.length,start+hard);if(end<text.length){let cut=-1;for(const marker of["\n\n","\n",". "," "]){const at=text.lastIndexOf(marker,hardEnd);if(at>=start+500){cut=at+marker.length;break;}}end=cut>start?cut:hardEnd;}const value=text.slice(start,end).trim();if(value.length>=40)chunks.push({text:value,char_start:start,char_end:end,token_count:estimateTokens(value)});if(end>=text.length)break;start=Math.max(start+1,end-overlap);}return chunks;}
 function ftsQuery(question){const words=(String(question||"").toLowerCase().match(/[a-z0-9]+/g)||[]).filter(w=>w.length>1).slice(0,24);return [...new Set(words)].map(w=>'"'+w.replace(/"/g,'""')+'"').join(" OR ");}
 
-async function ensureSchema(env){const statements=[
-"CREATE TABLE IF NOT EXISTS chat_universes (universe_id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', ui_visible INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), finalized_at TEXT)",
+async function ensureSchema(env){
+await env.DB.prepare("CREATE TABLE IF NOT EXISTS chat_universes (universe_id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', ui_visible INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), finalized_at TEXT)").run();
+// ui_visible was added after the original table existed in production; CREATE TABLE IF NOT EXISTS
+// does not retrofit columns onto an already-existing table, so add it idempotently here -- and
+// BEFORE any index that references it, since D1/SQLite cannot index a column that does not exist
+// yet on a pre-existing table. (This ordering bug is what broke live create/finalize the first time.)
+// SQLite/D1 has no "ADD COLUMN IF NOT EXISTS", so a duplicate-column error on a table that already
+// has it is expected and swallowed; any other error is rethrown.
+try{await env.DB.prepare("ALTER TABLE chat_universes ADD COLUMN ui_visible INTEGER NOT NULL DEFAULT 0").run();}catch(error){const msg=String((error&&error.message)||error||"");if(!/duplicate column name/i.test(msg))throw error;}
+const statements=[
 "CREATE TABLE IF NOT EXISTS chat_universe_sessions (session_id TEXT PRIMARY KEY, universe_id TEXT NOT NULL, resource_id TEXT NOT NULL, turns_json TEXT NOT NULL DEFAULT '[]', transcript_sha256 TEXT, manifest_key TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), FOREIGN KEY(universe_id) REFERENCES chat_universes(universe_id))",
 "CREATE INDEX IF NOT EXISTS idx_chat_sessions_universe ON chat_universe_sessions(universe_id, updated_at DESC)",
 "CREATE INDEX IF NOT EXISTS idx_chat_universes_visible ON chat_universes(status, ui_visible)"
 ];for(const sql of statements)await env.DB.prepare(sql).run();
-// ui_visible was added after the original table existed in production; CREATE TABLE IF NOT EXISTS
-// does not retrofit columns onto an already-existing table, so add it idempotently here. SQLite/D1
-// has no "ADD COLUMN IF NOT EXISTS", so a duplicate-column error on a table that already has it is
-// expected and swallowed; any other error is rethrown.
-try{await env.DB.prepare("ALTER TABLE chat_universes ADD COLUMN ui_visible INTEGER NOT NULL DEFAULT 0").run();}catch(error){const msg=String((error&&error.message)||error||"");if(!/duplicate column name/i.test(msg))throw error;}
 }
 
 // Pure predicate kept separate from the DB call so it is unit-testable without a D1 binding.
