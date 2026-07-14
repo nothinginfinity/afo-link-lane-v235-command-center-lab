@@ -2,9 +2,9 @@ import { apiIndexPilotResources, apiQueryPilotResource, apiBrowserQueryPilotReso
 import { apiNodeChatTurn, apiNodeChatTurnStream } from "./resource-node-chat.js";
 import { renderNodeChatDebugPage } from "./debug-node-chat.js";
 import { backfillFts } from "./article-index.js";
-import { routeChatUniverse } from "./chat-universe.js";
+import { routeChatUniverse, normalizeUniverseId, getPublicUniverseCatalog, resolveUniverseForLoad } from "./chat-universe.js";
 
-const VERSION = "2.3.20.9.4-chat-vector-readiness-bounded";
+const VERSION = "2.3.20.10-universe-ui-switcher";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const DEFAULT_UNIVERSE_ID = "default";
@@ -1929,8 +1929,16 @@ function bindFlightHud(){
 
 // =================== HTML ===================
 
-function buildGameHTML(layout){
+function buildGameHTML(layout,universeContext){
   const script=buildGameScript(layout);
+  const activeUniverse=(universeContext&&universeContext.activeUniverse)||{universe_id:DEFAULT_UNIVERSE_ID,title:"Default Universe",type:"default"};
+  const universeCatalog=Array.isArray(universeContext&&universeContext.catalog)&&universeContext.catalog.length?universeContext.catalog:[activeUniverse];
+  const activeUniverseTitle=safe(activeUniverse.title||activeUniverse.universe_id);
+  const universeSwitcherItemsHtml=universeCatalog.map(function(u){
+    const isActive=u.universe_id===activeUniverse.universe_id;
+    const href=u.universe_id===DEFAULT_UNIVERSE_ID?"/":"/?universe_id="+encodeURIComponent(u.universe_id);
+    return "<a class='universeItem"+(isActive?" active":"")+"' role='menuitem' href='"+href+"'>"+safe(u.title||u.universe_id)+(isActive?" · active":"")+"</a>";
+  }).join("");
   const parts=[
     "<!DOCTYPE html>",
     "<html lang='en'><head>",
@@ -1964,6 +1972,13 @@ function buildGameHTML(layout){
     "#radarRing:before{left:50%;top:8px;bottom:8px;width:1px;}",
     "#radarRing:after{left:8px;right:8px;top:50%;height:1px;}",
     "#waypointLayer{position:absolute;inset:0;pointer-events:none;z-index:28;}",
+    "#universeSwitcher{position:fixed;top:calc(env(safe-area-inset-top) + 10px);right:10px;z-index:150;font-family:monospace;}",
+    "#universeSwitcherBtn{min-height:36px;padding:6px 12px;border-radius:8px;background:rgba(0,10,8,.72);color:#00ff88;border:1px solid rgba(0,255,136,.4);font-family:monospace;font-size:11px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;-webkit-tap-highlight-color:transparent;backdrop-filter:blur(8px);}",
+    "#universeSwitcherPanel{display:none;position:absolute;top:42px;right:0;min-width:190px;max-width:260px;max-height:50vh;overflow-y:auto;background:rgba(2,4,10,.94);border:1px solid rgba(0,255,136,.35);border-radius:10px;padding:6px;backdrop-filter:blur(10px);}",
+    "#universeSwitcherPanel.open{display:block;}",
+    ".universeItem{display:block;width:100%;text-align:left;background:transparent;border:0;border-bottom:1px solid rgba(255,255,255,.08);color:#d9f5ff;font-family:monospace;font-size:12px;padding:10px 6px;text-decoration:none;min-height:20px;}",
+    ".universeItem:last-child{border-bottom:0;}",
+    ".universeItem.active{color:#00ff88;font-weight:bold;}",
     ".searchWaypoint{position:absolute;width:34px;height:34px;border-radius:50%;border:1px solid rgba(0,255,136,.62);background:rgba(0,18,14,.78);color:#bfffe3;box-shadow:0 0 14px rgba(0,255,136,.24);transform:translate(-50%,-50%) rotate(var(--ang));pointer-events:auto;touch-action:manipulation;font-family:monospace;font-size:13px;font-weight:bold;display:flex;align-items:center;justify-content:center;gap:1px;-webkit-tap-highlight-color:transparent;}",
     ".searchWaypoint span{font-size:15px;line-height:1;}",
     ".searchWaypoint b{font-size:9px;color:#00ff88;}",
@@ -2122,6 +2137,10 @@ function buildGameHTML(layout){
     "<div id='loadScreen'><div id='loadLogo'>LINK LANE</div><div id='loadText'>Initializing flight systems</div><div id='loadBarTrack'><div id='loadBar'></div></div></div>",
     "<div id='toast'></div>",
     "<div id='wrap'><canvas id='gc'></canvas>",
+    "<div id='universeSwitcher'>",
+    "  <button type='button' id='universeSwitcherBtn' onclick='toggleUniverseSwitcher()' aria-haspopup='true'>"+activeUniverseTitle+"</button>",
+    "  <div id='universeSwitcherPanel' role='menu' aria-label='Universe switcher'>"+universeSwitcherItemsHtml+"</div>",
+    "</div>",
     "<div id='hud'>",
     "  <div id='crosshair'></div><div id='targetHint'></div>",
     "  <div id='radarRing'></div><div id='waypointLayer' aria-label='Searchlight waypoints'></div>",
@@ -2218,6 +2237,7 @@ function buildGameHTML(layout){
     "<script>",
     script,
     "</script>",
+    "<script>function toggleUniverseSwitcher(force){var p=document.getElementById('universeSwitcherPanel');if(!p)return;var open=typeof force==='boolean'?force:!p.classList.contains('open');p.classList.toggle('open',open);}document.addEventListener('click',function(e){var sw=document.getElementById('universeSwitcher');if(sw&&!sw.contains(e.target))toggleUniverseSwitcher(false);});</script>",
     "</body></html>"
   ];
   return parts.join("\n");
@@ -2529,16 +2549,24 @@ if(path==="/api/resource-chat/turn"&&method==="POST") return url.searchParams.ge
     if(path==="/admin/query-pilot-resource"&&method==="POST") return apiQueryPilotResource(env,request);
     if(path==="/admin/pilot-retrieval-status"&&method==="GET") return apiPilotRetrievalStatus(env,request);
     if(path==="/admin/backfill-fts"&&method==="POST") return apiBackfillFts(env,request);
-    if(path==="/health") return j({ok:true,worker:WORKER_NAME,version:VERSION,max_universe_nodes:MAX_UNIVERSE_NODES,r2_resource_pilot:PILOT_RESOURCE_IDS.size,universe_partition:{default_universe_id:DEFAULT_UNIVERSE_ID,namespace_strategy:"legacy-default-qualified-future-v1"},resource_retrieval:{index_name:VECTOR_INDEX_NAME,namespace:"financial-aid-toolkit",embedding_model:"@cf/baai/bge-base-en-v1.5",embedding_pooling:"cls",embedding_dimensions:768,ai_binding:Boolean(env.AI),vector_binding:Boolean(env.RESOURCE_VECTORS),browser_route:"/api/resource-retrieval/query",resource_keying:"links.id",chunker_version:"pdf-page-v2-reading-order",normalizer:"pdf-reading-order-v2",ranking_version:RANKING_VERSION,answer_mode:ANSWER_MODE}});
+    if(path==="/health") return j({ok:true,worker:WORKER_NAME,version:VERSION,max_universe_nodes:MAX_UNIVERSE_NODES,r2_resource_pilot:PILOT_RESOURCE_IDS.size,universe_partition:{default_universe_id:DEFAULT_UNIVERSE_ID,namespace_strategy:"legacy-default-qualified-future-v1",catalog_route:"/api/universes",load_route:"/?universe_id="},resource_retrieval:{index_name:VECTOR_INDEX_NAME,namespace:"financial-aid-toolkit",embedding_model:"@cf/baai/bge-base-en-v1.5",embedding_pooling:"cls",embedding_dimensions:768,ai_binding:Boolean(env.AI),vector_binding:Boolean(env.RESOURCE_VECTORS),browser_route:"/api/resource-retrieval/query",resource_keying:"links.id",chunker_version:"pdf-page-v2-reading-order",normalizer:"pdf-reading-order-v2",ranking_version:RANKING_VERSION,answer_mode:ANSWER_MODE}});
     if(path==="/admin/setup"&&method==="POST"){
       const results=[];
       for(const sql of SCHEMA){try{await env.DB.prepare(sql).run();results.push({ok:true});}catch(e){results.push({ok:false,error:e.message});}}
       return j({ok:true,results});
     }
     if(path==="/"||path===""){
-      const r=await env.DB.prepare("SELECT id,url,title,description,domain,og_image_key,group_name,video_id,is_short,published_at,added_at FROM links WHERE universe_id=? ORDER BY COALESCE(group_name,domain), added_at LIMIT "+MAX_UNIVERSE_NODES).bind(DEFAULT_UNIVERSE_ID).all();
+      const requestedUniverseId=url.searchParams.get("universe_id");
+      let activeUniverse={universe_id:DEFAULT_UNIVERSE_ID,title:"Default Universe",type:"default"};
+      if(requestedUniverseId&&normalizeUniverseId(requestedUniverseId)!==DEFAULT_UNIVERSE_ID){
+        const resolved=await resolveUniverseForLoad(env,requestedUniverseId);
+        if(!resolved) return j({error:"Not found"},404);
+        activeUniverse=resolved;
+      }
+      const r=await env.DB.prepare("SELECT id,url,title,description,domain,og_image_key,group_name,video_id,is_short,published_at,added_at FROM links WHERE universe_id=? ORDER BY COALESCE(group_name,domain), added_at LIMIT "+MAX_UNIVERSE_NODES).bind(activeUniverse.universe_id).all();
       const layout=layoutLinks(r.results||[]);
-      return new Response(buildGameHTML(layout),{headers:{"Content-Type":"text/html;charset=UTF-8"}});
+      const catalog=await getPublicUniverseCatalog(env);
+      return new Response(buildGameHTML(layout,{activeUniverse,catalog}),{headers:{"Content-Type":"text/html;charset=UTF-8"}});
     }
     return j({error:"Not found"},404);
   }
