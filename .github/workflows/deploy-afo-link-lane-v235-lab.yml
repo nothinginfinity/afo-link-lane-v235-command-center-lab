@@ -6,7 +6,7 @@ on:
       expected_version:
         description: Expected Worker VERSION value to deploy
         required: true
-        default: 2.3.20.11-universe-access-policy
+        default: 2.3.20.12-active-universe-chat-query
       confirm:
         description: Type DEPLOY to confirm this manual lab deploy
         required: true
