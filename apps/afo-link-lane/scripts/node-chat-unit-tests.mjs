@@ -1,4 +1,5 @@
 import { apiNodeChatTurn, signContext, verifyContext, MAX_TURNS } from "../resource-node-chat.js";
+import { filterPublicChatUniverses, normalizeUniverseId } from "../chat-universe.js";
 
 let pass = 0, fail = 0;
 function check(name, cond, detail) {
@@ -161,6 +162,23 @@ async function run() {
   // 10. Wrong HTTP method
   res = await apiNodeChatTurn(envWithLabToken, new Request("https://example.workers.dev/api/resource-chat/turn", { method: "GET" }));
   check("GET is rejected with 405", res.status === 405);
+
+  // --- Step 3A: universe-switcher visibility contract (pure predicate, no D1 needed) ---
+  const rows = [
+    { universe_id: "chat-visible1", title: "Visible Finalized", status: "finalized", ui_visible: 1 },
+    { universe_id: "chat-hidden-finalized", title: "Hidden Finalized", status: "finalized", ui_visible: 0 },
+    { universe_id: "chat-open-visible-flag", title: "Open But Flagged", status: "open", ui_visible: 1 },
+    { universe_id: "chat-open", title: "Open", status: "open", ui_visible: 0 },
+  ];
+  const visible = filterPublicChatUniverses(rows);
+  check("only finalized+ui_visible=1 universes are surfaced", visible.length === 1 && visible[0].universe_id === "chat-visible1");
+  check("finalized-but-hidden universes are excluded (fail closed)", !visible.some(u => u.universe_id === "chat-hidden-finalized"));
+  check("non-finalized universes are excluded even if flagged visible (fail closed)", !visible.some(u => u.universe_id === "chat-open-visible-flag"));
+  check("visible entries never leak status/ui_visible fields, only universe_id/title/type", Object.keys(visible[0]).sort().join(",") === "title,type,universe_id");
+  check("filterPublicChatUniverses tolerates non-array input", filterPublicChatUniverses(null).length === 0 && filterPublicChatUniverses(undefined).length === 0);
+
+  check("normalizeUniverseId lowercases and slugifies", normalizeUniverseId("Chat 931847 EEE!") === "chat-931847-eee");
+  check("normalizeUniverseId falls back to default for empty input", normalizeUniverseId("") === "default" && normalizeUniverseId(null) === "default");
 
   console.log("\n" + pass + " passed, " + fail + " failed");
   if (fail > 0) process.exit(1);
