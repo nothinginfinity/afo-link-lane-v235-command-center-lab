@@ -4,7 +4,7 @@ import { renderNodeChatDebugPage } from "./debug-node-chat.js";
 import { backfillFts } from "./article-index.js";
 import { routeChatUniverse } from "./chat-universe.js";
 
-const VERSION = "2.3.20.9-chat-universe-prototype";
+const VERSION = "2.3.20.9.1-chat-auth-await-fix";
 // Feed auto-sync fallback is intentionally traffic-triggered while the live Cron Trigger schedule is installed separately.
 const WORKER_NAME = "afo-link-lane-v235-lab";
 const DEFAULT_UNIVERSE_ID = "default";
