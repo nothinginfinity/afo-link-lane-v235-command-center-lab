@@ -116,12 +116,27 @@ function authorizeUniverse(actor, universe, action) {
     return { allowed: false, action, reason: "not_visible", universe: null };
   }
 
-  if (
-    action === ACTIONS.CONTRIBUTE ||
-    action === ACTIONS.EDIT ||
-    action === ACTIONS.QUERY ||
-    action === ACTIONS.ADMINISTER
-  ) {
+  if (action === ACTIONS.QUERY) {
+    // QUERY is the one action anonymous browser callers may also take, on top
+    // of the authenticated service actor (Step 3C: the browser-safe active-
+    // universe chat query). Default universe resources have always been
+    // browser-queryable; a chat universe is queryable anonymously only under
+    // the same visibility rule as DISCOVER/VIEW. An authenticated service
+    // actor may still query any existing chat universe regardless of
+    // visibility, matching the pre-Step-3C admin-token-gated behavior.
+    if (isDefault) {
+      return { allowed: true, action, reason: "default_universe", universe: projectPublicUniverse(safeUniverse) };
+    }
+    if (isService) {
+      return { allowed: true, action, reason: "service_actor_authenticated", universe: projectPublicUniverse(safeUniverse) };
+    }
+    if (isPublishedChatUniverse(safeUniverse)) {
+      return { allowed: true, action, reason: "published_chat_universe", universe: projectPublicUniverse(safeUniverse) };
+    }
+    return { allowed: false, action, reason: "not_visible", universe: null };
+  }
+
+  if (action === ACTIONS.CONTRIBUTE || action === ACTIONS.EDIT || action === ACTIONS.ADMINISTER) {
     if (isDefault) {
       return { allowed: false, action, reason: "default_universe_not_a_chat_universe", universe: null };
     }
