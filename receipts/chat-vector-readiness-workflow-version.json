@@ -1,0 +1,43 @@
+{
+  "worker": "afo-gitzip",
+  "version": "0.2.2-unified",
+  "action": "apply_repo_text_patch",
+  "target": {
+    "owner": "nothinginfinity",
+    "repo": "afo-link-lane-v235-command-center-lab",
+    "branch": "main",
+    "path": ".github/workflows/deploy-afo-link-lane-v235-lab.yml"
+  },
+  "source_sha": "a48e420100bb0f164b451feaac7963d585a21fe4",
+  "result_sha": "ab089b94658aeb06cc07cc1ee58f16c900ff234b",
+  "commit_sha": "2d41381e31228e058c9fbc88cd8245b3cdb28095",
+  "diff": {
+    "before_length": 18058,
+    "after_length": 18060,
+    "delta": 2,
+    "common_prefix": 208,
+    "common_suffix": 17829,
+    "before_fingerprint": "3a577f9a",
+    "after_fingerprint": "7f4d6dfe"
+  },
+  "applied": [
+    {
+      "label": "op_0",
+      "type": "replace_exact",
+      "changed": true,
+      "replaced": 1
+    }
+  ],
+  "verification": {
+    "ok": true,
+    "results": [
+      {
+        "label": "contains",
+        "ok": true,
+        "detail": "contains"
+      }
+    ],
+    "failed": []
+  },
+  "timestamp": "2026-07-14T00:16:45.738Z"
+}
