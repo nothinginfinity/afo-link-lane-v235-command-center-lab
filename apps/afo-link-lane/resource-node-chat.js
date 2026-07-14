@@ -9,6 +9,11 @@ import {
   findArticleManifest,
   queryLexicalOnly
 } from "./article-index.js";
+import {
+  ACTIONS,
+  ANONYMOUS_ACTOR,
+  authorizeUniverse
+} from "./universe-access.js";
 
 const CHAT_MODE = "grounded-synthesis-v1";
 const CHAT_MODEL = "@cf/zai-org/glm-4.7-flash";
@@ -18,6 +23,29 @@ const MAX_REQUEST_BYTES = 32768;
 const CONTEXT_TOKEN_SALT = "node-chat-context-v2";
 const DEFAULT_UNIVERSE_ID = "default";
 function normalizeUniverseId(value) { return String(value || DEFAULT_UNIVERSE_ID).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48) || DEFAULT_UNIVERSE_ID; }
+
+// Step 3C: this route is the actual browser-facing query surface for any
+// node's chat, including a chat universe's own transcript node -- so it is
+// exactly the "browser-safe active-universe chat query" the roadmap
+// describes, and it must authorize universe_id before touching D1, R2, or
+// Vectorize. The caller here is always an anonymous browser actor (there is
+// no authenticated-caller concept on this unauthenticated route); the
+// default universe and any finalized+ui_visible=1 chat universe are
+// queryable, everything else fails closed with a generic 404 -- identical
+// treatment for "unknown" and "exists but hidden/non-finalized", matching
+// the VIEW route's convention so a public response never distinguishes them.
+async function authorizeChatQuery(env, universeId) {
+  if (universeId === DEFAULT_UNIVERSE_ID) {
+    return authorizeUniverse(ANONYMOUS_ACTOR, { universe_id: DEFAULT_UNIVERSE_ID }, ACTIONS.QUERY);
+  }
+  let row = null;
+  try {
+    row = await env.DB.prepare("SELECT universe_id,title,status,ui_visible FROM chat_universes WHERE universe_id=?").bind(universeId).first();
+  } catch {
+    row = null;
+  }
+  return authorizeUniverse(ANONYMOUS_ACTOR, row, ACTIONS.QUERY);
+}
 const BROWSER_HEADERS = { "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer" };
 
 function browserJson(value, status = 200, extra = {}) { return new Response(JSON.stringify(value), { status, headers: { ...BROWSER_HEADERS, ...extra } }); }
@@ -254,6 +282,12 @@ async function apiNodeChatTurn(env, request) {
   const question = String(body.question || "").trim();
   if (question.length < 3 || question.length > 500) return browserJson({ ok: false, error: "Question must be between 3 and 500 characters" }, 400);
 
+  // Step 3C: authorize the universe itself before anything else -- fail
+  // closed with a generic 404 for unknown, hidden, or non-finalized
+  // universes, before touching D1/R2/Vectorize or verifying turn history.
+  const universeAuthz = await authorizeChatQuery(env, universeId);
+  if (!universeAuthz.allowed) return browserJson({ ok: false, error: "Not found" }, 404);
+
   const shapeCheck = validateTurnsShape(resourceId, body.turns);
   if (!shapeCheck.ok) return browserJson({ ok: false, error: shapeCheck.error, cross_node: Boolean(shapeCheck.cross_node) }, shapeCheck.cross_node ? 409 : 400);
 
@@ -443,6 +477,11 @@ async function apiNodeChatTurnStream(env, request, ctx) {
   const question = String(body.question || "").trim();
   if (question.length < 3 || question.length > 500) return browserJson({ ok: false, error: "Question must be between 3 and 500 characters" }, 400);
 
+  // Step 3C: same authorization gate as the non-streaming route, checked
+  // before opening the SSE stream at all.
+  const universeAuthz = await authorizeChatQuery(env, universeId);
+  if (!universeAuthz.allowed) return browserJson({ ok: false, error: "Not found" }, 404);
+
   const shapeCheck = validateTurnsShape(resourceId, body.turns);
   if (!shapeCheck.ok) return browserJson({ ok: false, error: shapeCheck.error, cross_node: Boolean(shapeCheck.cross_node) }, shapeCheck.cross_node ? 409 : 400);
 
@@ -488,7 +527,7 @@ async function apiNodeChatTurnStream(env, request, ctx) {
           send({ tier: "instant", kind: "indexing_started", resource_id: resourceId });
           let phaseA;
           try {
-            phaseA = await runPhaseA(env, resourceId, "stream-" + Date.now().toString(36));
+            phaseA = await runPhaseA(env, resourceId, "stream-" + Date.now().toString(36), universeId);
           } catch (e) {
             send({ tier: "instant", kind: "error", resource_id: resourceId, error: e && e.message || String(e) });
             send({ tier: "deep", kind: "error", resource_id: resourceId, error: "Indexing failed; deep tier unavailable this turn." });
@@ -508,7 +547,7 @@ async function apiNodeChatTurnStream(env, request, ctx) {
       // manifest (no FTS coverage there); the deep tier below still runs.
       let lexicalEvidence = [];
       if (lexicalTierAvailable && sourceSha256) {
-        try { lexicalEvidence = await queryLexicalOnly(env, resourceId, sourceSha256, question, 8); } catch { /* best-effort; deep tier still runs */ }
+        try { lexicalEvidence = await queryLexicalOnly(env, resourceId, sourceSha256, question, 8, universeId); } catch { /* best-effort; deep tier still runs */ }
         const instantAnswer = instantExtractiveAnswer(lexicalEvidence);
         send({ tier: "instant", kind: instantAnswer.kind, resource_id: resourceId, answer: instantAnswer, evidence: lexicalEvidence, count: lexicalEvidence.length });
 
